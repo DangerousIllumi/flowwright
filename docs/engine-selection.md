@@ -69,11 +69,52 @@ whenever the window moves or is resized, the display resolution or scaling chang
 Use it only when the element cannot be located through the DOM and recording is not acceptable, and state that
 cost when proposing it.
 
+### 3.2 PAD as the shell: an external browser script does the work
+
+Some web jobs need a real browser session rather than a single JavaScript call: a persistent login profile, a PDF
+the browser renders, a download the browser owns, or a long chain of navigations. There PAD keeps only the shell
+duties and an external script (node + playwright, or python) performs the interaction.
+
+| Part | Does | Must not do |
+|---|---|---|
+| **PAD flow** | Pass parameters (SET variables at the top of the canvas), start the script with `Scripting.RunDOSCommand*`, read `StandardOutput` / `StandardError` / `ExitCode`, show the outcome, stop when the script reports a login that needs a human | Locate or click page elements, hold business rules, own the retry logic |
+| **External script** | Check the login state, navigate, extract, write files | Print non-ASCII to stdout or stderr |
+
+Rules that make this lane work:
+
+- **The script path is fixed** and lives in a flow variable, not in a command typed by hand on every run.
+- **Start from `tools/script-entry/entry-template.js`.** It already carries the four pieces of the shell contract:
+  argument parsing, the preflight, the result file and the exit code map. Copy it instead of reinventing the
+  flow-facing half of the script.
+- **Output directory ownership is declared, not assumed.** Either the script creates what it needs (idempotently,
+  without deleting what is already there), or the directories must exist before the run and the script preflights
+  them, failing with exit code 2 before the browser starts. Pick one per flow and keep it consistent: a flow that
+  is half self-creating and half dependent on a human fails exactly where nobody is watching.
+- **Console output is ASCII only** — PAD decodes a child process's output with the system code page; see
+  `docs/doc-language.md` section 3.
+- **Exit codes are the contract**: `0` all rows done, `1` some rows failed, `2` parameter or environment error.
+  "A login needs a human" gets its own code, separate from a wrong credential, so the operator does not investigate
+  the wrong thing. The flow branches on the number, never on the text.
+- **Leave the outcome on disk as well as on the console.** A small result file carries `RUNNING n/total` while the
+  script works and `OK:` or `FAIL: <code> <reason>` at the end, so a lost console, a closed window or a killed run
+  still says what happened: a run that never started looks different from one that stopped halfway.
+- **The run is bounded.** A PAD run can outlive the flow that started it, so the node uses the variant that fails on
+  timeout (`Scripting.RunDOSCommand.RunDOSCommandWithCodePageAndFailOnTimeout` carries `Timeout`) and the result
+  file is the sign of life: a run whose file stops advancing is killed and looked at by a human, not retried by the
+  flow.
+- **Login is automated as far as the identity provider allows.** A persisted profile, a Windows-integrated sign-in
+  or a live session cookie lets the script click through SSO on its own. Only a factor that genuinely needs a
+  person — a push confirmation, a one-time code, a biometric — stops the run, and then the script says so and
+  exits.
+- **State the measured cost before the first real batch.** Report the per-item time seen in the pilot run and the
+  resulting total. How to split the batch, when to run it and what to skip stays the operator's decision.
+
 ## 4. Flow-level composition
 
 | The whole job contains | Correct shape |
 |---|---|
 | At least one step that matches row 1 | A PAD flow (`flow.json` → `.robin`), with scripts called from `Scripting.RunDOSCommand*` nodes |
+| At least one step that matches row 1, and the interaction needs a real browser session (a login profile, a browser-rendered PDF, a browser-owned download) | A PAD shell flow — parameters, `Scripting.RunDOSCommand*`, an outcome dialog — with the interaction in an external browser script (section 3.2) |
 | Only rows 2 and 3 | An entry script (a `py` entry point, optionally wrapped by `ps1`), run directly or from Task Scheduler |
 | Only row 3 | An entry script, no PAD, no OS-level wrapper |
 

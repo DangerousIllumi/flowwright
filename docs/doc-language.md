@@ -60,6 +60,12 @@ How to apply it:
 - New rule ids are English and get a separate human description; never use a prose sentence as an id.
 - Prose wording may change between versions; the part that is asserted must stay stable.
 
+**Child-process output that PAD reads.** PAD captures a child process's stdout through the system ANSI code page,
+not UTF-8, so a script whose output lands in a PAD variable prints ASCII only. Localized text that belongs to the
+result — a column header, a sheet name — stays inside the file the script writes, never in a log line. Paths are
+the part a script cannot control: a directory literally named in a local language is printed as it is, and those
+lines are for a human to read, not for a machine to match.
+
 ## 4. Chinese in the public layer: values only
 
 The public layer is English by default. Chinese may appear **only as a literal value that an external system
@@ -87,6 +93,7 @@ Machine-consumed output keeps its ASCII anchor; see
 - [ ] Who is the reader of this document? Pick the language per section 1 and do not mix languages.
 - [ ] Is any fact restated from somewhere else? Delete the copy and replace it with a link.
 - [ ] Do newly added outputs, logs and assertions carry an ASCII anchor?
+- [ ] Does any script whose stdout or stderr lands in a PAD variable print ASCII only (section 3)?
 - [ ] Do the numbers match the code: 16 admission checks, 18 public samples (11 flows + 6 triggers +
       1 reversibility counterexample), 12 `*.cases.json` files, the CI step order and names.
 - [ ] Are identifiers, parameter names, rule ids and exit codes still English?

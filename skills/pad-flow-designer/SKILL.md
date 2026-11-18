@@ -54,6 +54,7 @@ the overall process, split it into nodes and ask again.
 | 4 | Which input files must exist before this step starts | `none` / for each file: directory (config key), filename wildcard, `true` required / `false` optional | node-level `inputs[]` (see "Input file declarations" below) |
 | 5 | How is this flow triggered | `manual` / `schedule` (`time` + `days` + `gate=workday|last-workday`) / `file` (`dir` must be `{{config.<KEY>}}`) | top-level `trigger`; fields and values in `docs/trigger-adapter-design.md`; `assisted=true` requires `timeout_sec` |
 | 6 | For a node that interacts with a web page: can this interaction be located through the DOM? | `yes` write the interaction as JavaScript in a `WebAutomation.ExecuteJavascript` node (section 3.1 of `docs/engine-selection.md`) / `no` state why, and the step goes to manual recording instead of generation | none; the answer decides whether the node is generated at all |
+| 7 | When a node starts an external script instead of acting itself: is the script path fixed, are its output directories created before the run, and is its console output ASCII? | path: absolute, carried in a `SET` variable / directories: exist before the run and the script never creates them, or the script creates them idempotently — pick one per flow and keep it / console: ASCII only (section 3.2 of `docs/engine-selection.md`) | the `SET` variables carrying the script path and the output roots, plus that node's `params` |
 
 Decision criteria:
 - **`idempotent` and `reversible` are two orthogonal axes; neither substitutes for the other**:
