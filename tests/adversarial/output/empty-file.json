@@ -1,0 +1,11 @@
+{
+  "id": "output/empty-file",
+  "category": "output",
+  "given": "The produced file exists but has zero bytes.",
+  "when": "The run reaches its success path.",
+  "expected": {
+    "exit_code": 1,
+    "side_effects": "the empty file is reported as a failure, not counted as produced"
+  },
+  "why": "A file that exists proves nothing; a run that claims success on an empty product is the failure this case exists to catch."
+}

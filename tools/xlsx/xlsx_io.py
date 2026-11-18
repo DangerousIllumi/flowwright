@@ -16,12 +16,19 @@ Public functions:
   header_row_grid(grid)          the header row of a 2-D list
   read_rule_table(ws, ...)       rule sheet -> dict (pure function, writes no module-level global)
   infer_column_type(values)      infer a column type from how cells are stored (used by the header inspector)
+  cell_to_json(v)                cell value -> a JSON-serialisable value (dates become ISO 8601 strings)
+  read_workbook(path, ...)       workbook -> {file, sheets: [{name, header, rows}]}, read-only and JSON-ready
 
 CLI (read-only troubleshooting for template swaps / column drift):
   python xlsx_io.py --dump <workbook> [--sheet <name>] [--max-col N]
       print every worksheet's column names and inferred types without modifying the file.
+  python xlsx_io.py --read <workbook> --json [--sheet <name>] [--max-col N]
+      emit every worksheet as JSON on stdout, for a caller that is not Python (PAD, node).
+      The shell only parses arguments, calls the functions above and serialises; it holds no
+      column aliases and no date handling, so there is exactly one set of rules.
 """
 import argparse
+import json
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -255,10 +262,57 @@ def dump_workbook(path, sheet=None, max_col=60):
         wb.close()
 
 
+def cell_to_json(v):
+    """Turn a cell value into something json.dumps accepts, without deciding anything about its meaning
+
+    Only a type conversion: dates and datetimes become ISO 8601 strings because JSON has no date type.
+    It does not parse strings back, apply a locale, or pick a display format — those are business
+    decisions and stay out of this layer.
+    """
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    return str(v)
+
+
+def read_workbook(path, sheet=None, max_col=60):
+    """Read a workbook into a JSON-ready dict: {file, sheets: [{name, header, rows}]}
+
+    Read-only, with the same column cap as load_grid. The header keeps the trailing-empty trim that the
+    header inspector uses; each data row drops its trailing empty cells because the read-only iterator pads
+    every row to max_col. Row order and leading positions are preserved, so a column index stays meaningful.
+    """
+    if not os.path.isfile(path):
+        raise OSError("workbook not found: %s" % path)
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if sheet and sheet not in wb.sheetnames:
+            raise ValueError("worksheet not found in workbook: %s" % sheet)
+        names = [sheet] if sheet else list(wb.sheetnames)
+        sheets = []
+        for name in names:
+            grid = load_grid(wb[name], max_col=max_col)
+            header = [cell_to_json(h) for h in _trim_trailing_empty(header_row_grid(grid))]
+            rows = []
+            for row in grid[1:]:
+                values = [cell_to_json(v) for v in row]
+                while values and values[-1] is None:
+                    values.pop()
+                rows.append(values)
+            sheets.append({"name": name, "header": header, "rows": rows})
+        return {"file": os.path.abspath(path), "sheets": sheets}
+    finally:
+        wb.close()
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Excel 只读读取层（表头探查）")
-    p.add_argument("--dump", metavar="XLSX", help="只读打印每张工作表的列名与推断类型")
-    p.add_argument("--sheet", default=None, help="只探查指定工作表")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--dump", metavar="XLSX", help="只读打印每张工作表的列名与推断类型")
+    group.add_argument("--read", metavar="XLSX", help="以 JSON 输出每张工作表（须同时给 --json）")
+    p.add_argument("--json", action="store_true", help="stdout 输出 JSON（纯 ASCII），与 --read 搭配")
+    p.add_argument("--sheet", default=None, help="只处理指定工作表")
     p.add_argument("--max-col", type=int, default=60, help="最多读取的列数（默认 60）")
     args = p.parse_args(argv)
 
@@ -269,10 +323,21 @@ def main(argv=None):
         except Exception:
             pass
 
-    if not args.dump:
-        p.print_help()
-        return 2
+    if args.read and not args.json:
+        p.error("--read requires --json")
+    if args.json and not args.read:
+        p.error("--json is only valid with --read")
+
     try:
+        if args.read:
+            # ensure_ascii keeps stdout ASCII-only: PAD decodes a child process's stdout with the system
+            # code page, so a non-ASCII byte would reach the flow already mangled.
+            text = json.dumps(read_workbook(args.read, args.sheet, args.max_col), ensure_ascii=True)
+            sys.stdout.write(text + "\n")
+            return 0
+        if not args.dump:
+            p.print_help()
+            return 2
         dump_workbook(args.dump, args.sheet, args.max_col)
     except Exception as exc:
         sys.stderr.write("[error] %s\n" % exc)

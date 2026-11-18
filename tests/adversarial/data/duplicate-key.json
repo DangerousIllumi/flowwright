@@ -1,0 +1,11 @@
+{
+  "id": "data/duplicate-key",
+  "category": "data",
+  "given": "The same business key appears in two input rows.",
+  "when": "The batch processes its rows.",
+  "expected": {
+    "status": "ABORTED",
+    "side_effects": "neither row is processed and the duplicate is named in the output"
+  },
+  "why": "Silently keeping one row makes the result depend on row order, and processing both duplicates the side effect."
+}

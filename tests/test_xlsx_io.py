@@ -11,9 +11,13 @@ Covers both the legacy contract and the newer semantics:
   4. reading a rule sheet into a dict is a pure function: an empty sheet returns {}, a
      missing key column raises, and duplicate keys raise;
   5. --dump is a read-only diagnostic entry point: it prints column names and inferred
-     types without touching the file.
+     types without touching the file;
+  6. --read --json is a thin shell for non-Python callers: it only serialises what the
+     library returned, and its stdout stays ASCII because PAD decodes it with the system
+     code page.
 """
 import hashlib
+import json
 import subprocess
 import sys
 from datetime import date, datetime
@@ -267,3 +271,59 @@ def test_dump_missing_file_fails(tmp_path):
     proc = _dump(tmp_path / "nope.xlsx")
     assert proc.returncode == 1
     assert "workbook not found" in proc.stderr
+
+
+# ── JSON reading CLI (thin shell) ─────────────────────────────
+def _read(path, *extra):
+    return subprocess.run(
+        [sys.executable, str(MODULE), "--read", str(path), "--json", *extra],
+        capture_output=True, timeout=60)
+
+
+def _read_fixture(tmp_path):
+    path = tmp_path / "read.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "数据"
+    ws.append(["单号", "数量", "日期"])
+    ws.append(["A-1", 12, datetime(2026, 10, 26, 15, 30)])
+    ws.append(["A-2", None, None])
+    wb.save(str(path))
+    wb.close()
+    return path
+
+
+def test_read_json_emits_header_and_rows(tmp_path):
+    """--read --json emits {name, header, rows}; a date becomes an ISO string and a short row is not padded"""
+    proc = _read(_read_fixture(tmp_path))
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    data = json.loads(proc.stdout.decode("ascii"))
+    sheet = data["sheets"][0]
+    assert sheet["name"] == "数据"
+    assert sheet["header"] == ["单号", "数量", "日期"]
+    assert sheet["rows"][0] == ["A-1", 12, "2026-10-26T15:30:00"]
+    assert sheet["rows"][1] == ["A-2"], "行尾的空单元格不应被补齐成 max_col 个 null"
+
+
+def test_read_json_stdout_is_pure_ascii(tmp_path):
+    """stdout must stay ASCII: PAD decodes a child process's stdout with the system code page"""
+    proc = _read(_read_fixture(tmp_path))
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    assert all(b < 128 for b in proc.stdout)
+    assert b"\\u5355\\u53f7" in proc.stdout, "中文表头应以 \\uXXXX 转义，而不是原字节"
+
+
+def test_read_requires_json(tmp_path):
+    """--read without --json is a parameter error (exit 2), not a silently different output shape"""
+    proc = subprocess.run(
+        [sys.executable, str(MODULE), "--read", str(tmp_path / "x.xlsx")],
+        capture_output=True, timeout=60)
+    assert proc.returncode == 2
+    assert b"--read requires --json" in proc.stderr
+
+
+def test_read_missing_file_fails(tmp_path):
+    """Missing file: exit code 1 and the error goes to stderr, same as --dump"""
+    proc = _read(tmp_path / "nope.xlsx")
+    assert proc.returncode == 1
+    assert b"workbook not found" in proc.stderr

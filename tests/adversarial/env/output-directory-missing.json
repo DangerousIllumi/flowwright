@@ -1,0 +1,11 @@
+{
+  "id": "env/output-directory-missing",
+  "category": "env",
+  "given": "One of the declared output directories does not exist.",
+  "when": "The script runs its preflight.",
+  "expected": {
+    "exit_code": 2,
+    "side_effects": "existing products in the other directories are untouched"
+  },
+  "why": "Ownership of the output directory is declared per flow; a half-created, half-missing set of directories fails where nobody watches."
+}

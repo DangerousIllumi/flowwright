@@ -57,6 +57,13 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-output-roots.ps1'"
           if ($LASTEXITCODE -ne 0) { throw "output-roots gate failed: $LASTEXITCODE" }
 
+      - name: "Adversarial-set gate (the hold-out cases stay out of the generator)"
+        shell: powershell
+        run: |
+          # each case carries its expected outcome; a generator that can read them is written to the test, not the spec
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-adversarial-set.ps1'"
+          if ($LASTEXITCODE -ne 0) { throw "adversarial-set gate failed: $LASTEXITCODE" }
+
       - name: Install Python 3.13
         uses: actions/setup-python@v5
         with:

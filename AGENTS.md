@@ -34,6 +34,7 @@
 | `tools/workday/` | Workday calendar checks (general-purpose) |
 | `tools/xlsx/` | Read-only Excel layer (general-purpose): column lookup by header name, lenient date/number conversion, header inspection entry point (`--dump`) |
 | `tools/publish/` | Public-content denylist scan `check-public-safe.ps1`: blocks business terms and internal paths before a push |
+| `tools/verify/` | `check-adversarial-set.ps1` (hold-out case set, generator must not read it) and `check-test-report.ps1` (delivery needs `verdict=pass`); the cases live in `tests/adversarial/<category>/` |
 | `tools/script-entry/` | Entry template for a script a PAD shell flow starts (`docs/engine-selection.md` section 3.2): argument parsing, preflight that exits 2 before any work, `RUNNING` / `OK:` / `FAIL:` result file, exit code map |
 | `skills/pad-flow-designer/` | Design rules for requirement → `flow.json` |
 | `skills/pad-robin-coder/` | Red lines for writing scripts |
@@ -142,6 +143,11 @@ A requirement is done only when all of the following hold:
    with code 2 and also blocks delivery)
 4. The user is told the artifact path, the paste steps, and everything that still needs human work
    (UI elements / VBS / accounts)
+5. A test report exists with `verdict=pass`:
+   `.\tools\verify\check-test-report.ps1 -ReportFile <report>.json` exits 0. No report, or any verdict other
+   than `pass`, stops the task here — it is not delivered on the strength of the first four items. The report
+   cites its acceptance results and its adversarial results; a `gap` is allowed only when it is listed in
+   `known_limitations`.
 
 See `docs/nl-to-flow-guide.md` for a worked example; the 18 copy-ready samples are in `tests/eval/fixtures/`
 (11 flows + 6 triggers + 1 reversibility counterexample).

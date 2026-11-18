@@ -1,0 +1,11 @@
+{
+  "id": "auth/expired-session",
+  "category": "auth",
+  "given": "The saved login session has expired before or during the run.",
+  "when": "The script checks access.",
+  "expected": {
+    "status": "NEEDS_HUMAN",
+    "side_effects": "the run stops instead of retrying until the timeout"
+  },
+  "why": "Expired access needs a person; reported as a generic failure it sends the operator to the wrong fix and burns the batch waiting."
+}

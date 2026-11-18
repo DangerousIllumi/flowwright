@@ -1,0 +1,11 @@
+{
+  "id": "input/missing-input-file",
+  "category": "input",
+  "given": "The input workbook named in the configuration does not exist.",
+  "when": "The entry script starts.",
+  "expected": {
+    "exit_code": 2,
+    "side_effects": "no output file is created"
+  },
+  "why": "An input problem must stop before the first side effect, and must not be reported as a partial run."
+}
