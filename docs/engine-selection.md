@@ -42,6 +42,10 @@ Apply it per step, before choosing a tool. The first matching row wins.
 A step that satisfies row 1 *and* row 3 is split, not assigned wholesale: PAD performs the click, the script
 performs the computation, and the flow passes data between them through a file or a command-line argument.
 
+Row 3 also fixes **where** the data comes from. A data-reading step declares `source: file` or `source: sql`, and
+that value is frozen at design time rather than chosen during a run; see
+[`data-source-spec.md`](data-source-spec.md).
+
 ### 3.1 Web interaction: ask for the DOM first
 
 A web page is not a blind desktop client. Before proposing a recording, answer one question: **can the page be

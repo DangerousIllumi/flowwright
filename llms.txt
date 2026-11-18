@@ -44,6 +44,7 @@ Then walk through `docs/nl-to-flow-guide.md`: requirement → `flow.json` → ge
 | Understand the project as a whole | [README.md](README.md) |
 | Before doing the work (generate / check / publish) | [AGENTS.md](AGENTS.md) |
 | Writing a flow (requirement → `flow.json`) | [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) |
+| Choosing a lane, and fixing the data source | [docs/engine-selection.md](docs/engine-selection.md), [docs/data-source-spec.md](docs/data-source-spec.md) |
 | Script red lines | [skills/pad-robin-coder](skills/pad-robin-coder/SKILL.md) |
 | Gates, admission, fingerprints | [docs/admission-gate.md](docs/admission-gate.md) |
 | Boundaries when switching engines | [README.md](README.md), section "Layering: the IR is the source of truth, engines are replaceable back ends" |
