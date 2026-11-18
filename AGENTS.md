@@ -52,6 +52,20 @@
 Business files simply go under `business/`; `git status` will not show them, and the push gate exits with code 2
 when it encounters one.
 
+**Every piece of workflow content lives under `business/`.** Definitions (`flow.json`, `.robin`, `.drawio`), the
+configuration table, run logs, state and snapshot files, and the scripts a flow starts all belong there. Two
+consequences follow:
+
+- A script writes its log to `business/logs/<flow>/`, never to a system or application directory
+  (`%APPDATA%`, a Trae command-output folder, `%TEMP%`). Those locations vanish on reinstall, are invisible to the
+  next person, and put order numbers and business paths outside the gate that protects `business/`.
+- A produced artifact (a PDF, a workbook, an exported report) may leave `business/` when its output root was
+  declared as a decision and recorded in the decision ledger. That is a registered exception, not a default.
+  Anything that cannot name its declared output root is workflow content and belongs under `business/`.
+
+`tools/publish/check-workflow-content.ps1` fails the build when a workflow artifact type appears in the public
+layer, so the rule is enforced rather than remembered.
+
 ## 2. Three hard rules (violations are rejected by the tools)
 
 1. **Never invent actions**: `pad_hint` must be a real three-part `actionId` from `pad-robin-action-kb/PAD_Robin_ActionKB.json`.

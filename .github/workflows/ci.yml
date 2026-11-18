@@ -42,6 +42,21 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-public-lang.ps1' -Files (git ls-files)"
           if ($LASTEXITCODE -ne 0) { throw "public-lang gate failed: $LASTEXITCODE" }
 
+      - name: "Workflow-content gate (definitions, configuration, logs live under business/)"
+        shell: powershell
+        run: |
+          # a workflow artifact type in the public layer means it escaped business/
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-workflow-content.ps1' -Files (git ls-files)"
+          if ($LASTEXITCODE -ne 0) { throw "workflow-content gate failed: $LASTEXITCODE" }
+
+      - name: "Output-root registry gate (a path outside business/ must be a registered exception)"
+        shell: powershell
+        run: |
+          # business/ is excluded by .gitignore, so this gate skips on the public runner by design;
+          # a missing registry only fails where the business layer actually exists
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-output-roots.ps1'"
+          if ($LASTEXITCODE -ne 0) { throw "output-roots gate failed: $LASTEXITCODE" }
+
       - name: Install Python 3.13
         uses: actions/setup-python@v5
         with:
