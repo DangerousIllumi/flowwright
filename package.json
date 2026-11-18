@@ -1,8 +1,8 @@
 {
-  "name": "flow-ir",
+  "name": "flowwright",
   "version": "0.1.0",
   "private": true,
-  "description": "flow-ir: an engine-agnostic flow IR with a multi-engine adapter toolchain (the Node dependency is currently used only for ELK flow-diagram layout)",
+  "description": "flowwright: an engine-agnostic flow IR with a multi-engine adapter toolchain (the Node dependency is currently used only for ELK flow-diagram layout)",
   "engines": {
     "node": ">=18"
   },

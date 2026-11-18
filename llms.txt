@@ -1,4 +1,4 @@
-# flow-ir
+# flowwright
 
 > An engine-agnostic intermediate representation (IR) for business processes, plus a multi-engine adapter
 > toolchain: `flow.json` is the source of truth, and **only one adapter is implemented today — PAD

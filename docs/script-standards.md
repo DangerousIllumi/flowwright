@@ -21,6 +21,11 @@ Side-effect nodes must answer two orthogonal questions, mapped to two fields in 
 - `reversible`: can the consequences already produced be withdrawn; when `false`, write `reversibility_note` (it must state the revert path).
 Saving attachments, exporting files, reconciliation files and marking as read are reversible; sending mail and posting documents are not.
 
+**Identifiers that already live outside the repository do not follow the project name.** The scheduled-task prefix
+`flow-ir-`, the description anchor `flow-ir-spec:`, and the state directory `%LOCALAPPDATA%\flow-ir` are contracts
+with Windows: renaming them would orphan every registered task and break the fingerprint match. The repository is
+`flowwright`; these three stay as they are.
+
 ## 1. External script output conventions (what the RunDOSCommand hook parses)
 
 When a RunDOSCommand in PAD calls VBS/Python and it fails, Actions.log records only exitCode + stdout/stderr.
@@ -185,7 +190,7 @@ Tick "nested in a new Excel process" on Excel.LaunchExcel to guarantee a separat
 ## 9. Project directory structure
 
 ```
-flow-ir/
+flowwright/
 ├── AGENTS.md                         <- AI assistant entry point
 ├── docs/script-standards.md          <- this file
 ├── docs/robin-format-reference.md    <- .robin syntax reference

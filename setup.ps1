@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    flow-ir - local framework installer.
+    flowwright - local framework installer.
 .DESCRIPTION
     1. Check the Node.js / Git environment
     2. Clone pad-robin-action-kb (the action knowledge base)

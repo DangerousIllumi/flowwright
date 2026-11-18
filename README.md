@@ -1,4 +1,4 @@
-# flow-ir
+# flowwright
 
 An engine-agnostic intermediate representation (IR) for business processes, plus a multi-engine adapter toolchain.
 
@@ -98,8 +98,8 @@ processes exist only on the user's own machine and never leak through the reposi
 ## Quick start
 
 ```powershell
-git clone https://github.com/DangerousIllumi/flow-ir.git flow-ir
-cd flow-ir
+git clone https://github.com/DangerousIllumi/flowwright.git flowwright
+cd flowwright
 .\tools\check-env.ps1    # verify Node >= 18, Git and PowerShell
 .\setup.ps1              # install Node deps, enable the pre-commit gate, clone the action knowledge base
 
@@ -116,7 +116,7 @@ cd flow-ir
 
 > On restricted networks or behind a proxy/firewall, direct HTTPS access to GitHub may be blocked
 > (the usual error is `Recv failure: Connection was reset`).
-> Use SSH instead: `git clone git@github.com:DangerousIllumi/flow-ir.git flow-ir`.
+> Use SSH instead: `git clone git@github.com:DangerousIllumi/flowwright.git flowwright`.
 > Cloning is enough to use the toolchain; fork only if you intend to change the toolchain itself.
 > If PowerShell says "running scripts is disabled on this system", use
 > `powershell -ExecutionPolicy Bypass -File .\setup.ps1`.

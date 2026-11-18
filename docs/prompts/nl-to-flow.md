@@ -4,7 +4,7 @@
 > your requirement at the end.
 
 ```text
-I am working in the flow-ir repository. Please build a PAD workflow for me by following the AGENTS.md in the repository.
+I am working in the flowwright repository. Please build a PAD workflow for me by following the AGENTS.md in the repository.
 
 Steps:
 1. Read AGENTS.md in the repository root first; run .\setup.ps1 and .\tools\check-env.ps1 if needed (once only).

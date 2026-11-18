@@ -175,8 +175,8 @@ Describe 'pad-schedule pure function tests' {
     }
 
     It 'paths with spaces are quoted so -File is not truncated' {
-        $s = New-ScheduleActionSpec -ScriptPath 'C:\flow-ir\pad-sync.ps1' -FlowName 'PAD_SYNC_TEST'
-        $s.args | Should Match '"C:\\flow-ir\\pad-sync.ps1"'
+        $s = New-ScheduleActionSpec -ScriptPath 'C:\flowwright\pad-sync.ps1' -FlowName 'PAD_SYNC_TEST'
+        $s.args | Should Match '"C:\\flowwright\\pad-sync.ps1"'
     }
 
     It 'workday check: a missing calendar file raises an error instead of falling back to Monday through Friday' {

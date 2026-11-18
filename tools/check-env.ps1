@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Check whether the local environment satisfies the flow-ir framework requirements.
+    Check whether the local environment satisfies the flowwright framework requirements.
 .DESCRIPTION
     Checks that Node.js (>=18) and Git are available and prints their versions and status.
     No administrator rights are needed; run it directly.
