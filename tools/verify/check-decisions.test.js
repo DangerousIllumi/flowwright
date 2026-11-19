@@ -74,17 +74,18 @@ test("pass: a risk node covered by a user-approved global decision exits 0", () 
   assert.doesNotMatch(r.stdout, /violation/);
 });
 
-test("pass: scope accepts the flow's repo-relative path, with / or \\ separators", () => {
+test("pass: the scope value domain is global | flow:<name> | script:<path>", () => {
+  // scope is the human-readable subject of a decision and is NOT matched against the flow; decisions[].node
+  // binds the decision. The gate only enforces that every row stays inside the closed domain.
   const flow = {
     nodes: [{ id: "15", reversible: false }],
     decisions: [{ node: "15", decision_id: "D-001" }],
   };
-  const forward = runCheck({ flow, ledger: ledgerText([record({ class: "risk", scope: "flows/x.json" })]) });
-  assert.strictEqual(forward.status, 0, forward.stderr);
-  assert.match(forward.stdout, /passed/);
-  const backslash = runCheck({ flow, ledger: ledgerText([record({ class: "risk", scope: "flows\\x.json" })]) });
-  assert.strictEqual(backslash.status, 0, backslash.stderr);
-  assert.match(backslash.stdout, /passed/);
+  for (const scope of ["global", "flow:some-other-flow", "script:business/scripts/other.ps1"]) {
+    const r = runCheck({ flow, ledger: ledgerText([record({ class: "risk", scope })]) });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /passed/, `scope ${scope} must be accepted`);
+  }
 });
 
 test("RISK_NODE_WITHOUT_DECISION: reversible=false needs a decisions entry, reported in warn mode", () => {
@@ -177,7 +178,7 @@ test("DECISION_NOT_USER_APPROVED: class=risk may not be approved by an agent(rec
   assert.match(r.stdout, /warn: 1 violation\(s\)/);
 });
 
-test("DECISION_SCOPE_MISMATCH: a record scoped to another artifact is rejected", () => {
+test("DECISION_SCOPE_INVALID: a scope outside the closed domain is rejected (a bare path is not a scope)", () => {
   const r = runCheck({
     flow: {
       nodes: [{ id: "15", reversible: true }],
@@ -186,7 +187,19 @@ test("DECISION_SCOPE_MISMATCH: a record scoped to another artifact is rejected",
     ledger: ledgerText([record({ scope: "business/flows/other.json" })]),
   });
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /DECISION_SCOPE_MISMATCH .*scope=business\/flows\/other\.json covers neither global nor flows\/x\.json/);
+  assert.match(r.stdout, /DECISION_SCOPE_INVALID .*scope="business\/flows\/other\.json" expected global \| flow:<name> \| script:<repo-relative path>/);
+});
+
+test("DECISION_SCOPE_INVALID: the ledger schema is checked for every row, not only the cited ones", () => {
+  const r = runCheck({
+    flow: { nodes: [{ id: "15", reversible: true }], decisions: [{ node: "15", decision_id: "D-001" }] },
+    ledger: ledgerText([
+      record({ id: "D-001", scope: "global" }),
+      record({ id: "D-002", scope: "flow:" }),
+    ]),
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /DECISION_SCOPE_INVALID decision=D-002/);
 });
 
 test("DECISION_CLASS_INVALID: class must be risk or standard", () => {
@@ -237,7 +250,31 @@ test("DECISION_ENTRY_INVALID: an entry without a string decision_id", () => {
 test("LEDGER_MISSING: the business layer exists but the ledger file does not", () => {
   const r = runCheck({ flow: { nodes: [] } });
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /LEDGER_MISSING ledger=business\/decisions\.jsonl required whenever the business layer exists/);
+  assert.match(r.stdout, /LEDGER_MISSING ledger=business\/decisions\.jsonl is missing \(the business layer exists, so the ledger must exist too\)/);
+});
+
+test("LEDGER_MISSING: with no business layer at all, a cited decision is a violation, never a skip", () => {
+  // Deleting the ledger must not turn the gate off. The public tree has no business/ at all, so a flow that
+  // cites decisions is exactly the case that used to fall through as "there is nothing to verify".
+  const flow = {
+    nodes: [{ id: "15", reversible: true }],
+    decisions: [{ node: "15", decision_id: "D-001" }],
+  };
+  const warn = runCheck({ flow, business: false });
+  assert.strictEqual(warn.status, 0, warn.stderr);
+  assert.doesNotMatch(warn.stdout, /skip:/);
+  assert.match(warn.stdout, /LEDGER_MISSING ledger=business\/decisions\.jsonl is missing \(the flow cites 1 decision\(s\) and a reference that cannot be checked is not a pass\)/);
+  assert.match(warn.stdout, /warn: 1 violation\(s\)/);
+
+  const fail = runCheck({ flow, business: false, mode: "fail" });
+  assert.strictEqual(fail.status, 1, fail.stderr);
+  assert.match(fail.stdout, /\[check-decisions\] failed: 1 violation\(s\)/);
+});
+
+test("LEDGER_MISSING: no citations and no business layer still skips (the public runner case)", () => {
+  const r = runCheck({ flow: { nodes: [{ id: "15", reversible: false }] }, business: false });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /skip: business layer not present in this repository/);
 });
 
 test("warn mode exits 0 with a warn summary; fail mode exits 1 on the same input", () => {
@@ -263,8 +300,8 @@ test("ASCII: a non-ASCII scope and decision id are reported as \\uXXXX", () => {
     ledger: ledgerText([record({ scope: "\u4e1a\u52a1/other.json" })]),
   });
   assert.strictEqual(scope.status, 0, scope.stderr);
-  assert.match(scope.stdout, /DECISION_SCOPE_MISMATCH/);
-  assert.match(scope.stdout, /scope=\\u4E1A\\u52A1\/other\.json/);
+  assert.match(scope.stdout, /DECISION_SCOPE_INVALID/);
+  assert.match(scope.stdout, /scope="\\u4E1A\\u52A1\/other\.json"/);
   assert.ok(!/[\u0080-\uFFFF]/.test(scope.stdout), "no raw non-ASCII character in stdout");
 
   const decisionId = runCheck({

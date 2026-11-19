@@ -417,8 +417,11 @@ Describe 'pad-admit no longer defaults to a concrete business flow' {
         $text | Should Match 'ADMIT_ERROR'
         $text | Should Match 'E_FLOW_FILE_REQUIRED'
         $text | Should Match '-FlowFile'
-        # It must fail before the flow definition is read, so the summary of the 17 admission checks must not be printed
-        $text | Should Not Match '"total":17'
+        # It must fail before the flow definition is read, so the only check in the report is the ADMIT error
+        # itself. Asserting a specific "total":N was vacuous: this path always reports total=1, so the old
+        # "not total:14" passed without proving anything.
+        ([regex]::Matches($text, '"id":"')).Count | Should Be 1
+        $text | Should Match '"id":"ADMIT"'
         $text | Should Not Match 'POLICY_'
     }
 }

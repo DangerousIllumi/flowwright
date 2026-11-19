@@ -33,21 +33,26 @@
 | 14 | INTENT | Node `intent` / `tags` | Generic actions such as `RunDOSCommand` and `RunVBScript` must carry a semantic tag that policy can match | `MISSING_INTENT` | `pad-admit.ps1` (a missing intent is fail; policy supports `when.intent`) |
 | 15 | TRIGGER | The `trigger` block in `flow.json` + node reversibility + script destructive declarations | Kind domain, required fields, directory must come from a config reference, unattended runs may not require human confirmation; every node must declare `reversible`, and `RunDOSCommand`/`RunVBScript` must also declare `intent_destructive` | `TRIGGER_*` (see 2.2, 2.2b) + `REVERSIBILITY_UNDECLARED` | `pad-admit.ps1` (an undeclared trigger is warn during the observation period; every node missing `reversible` is ask, and script nodes missing `intent_destructive` are ask) |
 | 16 | INPUT | Node-level `inputs` declaration + `config` | Directory must come from a config reference; `required` declared explicitly; a required file with 0 candidates fails; ≥2 candidates is always ambiguous | `INPUT_*` (see 2.3) | `pad-admit.ps1` (undeclared is warn, for backward compatibility) |
-| 17 | DECISION | `flow.json` + `business/decisions.jsonl` | Every risk node (`reversible=false` or `intent_destructive=true`) is covered by a `decisions` entry whose ledger record exists, is `class=risk` with `decided_by=user`, and is scoped `global` or to this flow | `RISK_NODE_WITHOUT_DECISION` / `RISK_NODE_DECISION_NOT_RISK` / `DECISION_NOT_IN_LEDGER` / `DECISION_NOT_USER_APPROVED` / `DECISION_SCOPE_MISMATCH` / `DECISION_CLASS_INVALID` / `DECISION_DECIDED_BY_INVALID` / `DECISION_ENTRY_INVALID` / `DECISION_NODE_NOT_FOUND`; `DECISION_PENDING` / `DECISION_SKIPPED` (warn); `DECISION_ERROR` (fail: unreadable flow or an unrecognised gate report) | `tools/verify/check-decisions.js`, called from `tools/pad-sync/pad-admit.ps1` and `tools/pad-robin/flow-to-robin.js`; two-phase warn -> fail rollout (see below) |
+| 17 | DECISION | `flow.json` + `business/decisions.jsonl` | Every risk node (`reversible=false` or `intent_destructive=true`) is covered by at least one `decisions` entry whose ledger record exists and is `class=risk` with `decided_by=user`; every ledger row keeps `scope` inside the closed domain `global` / `flow:<name>` / `script:<repo-relative path>`, and a cited decision must exist (citing decisions with no ledger to verify them is a failure, never a skip) | `RISK_NODE_WITHOUT_DECISION` / `RISK_NODE_DECISION_NOT_RISK` / `DECISION_NOT_IN_LEDGER` / `DECISION_NOT_USER_APPROVED` / `DECISION_SCOPE_INVALID` / `DECISION_CLASS_INVALID` / `DECISION_DECIDED_BY_INVALID` / `DECISION_ENTRY_INVALID` / `DECISION_NODE_NOT_FOUND` / `LEDGER_MISSING` / `LEDGER_UNREADABLE`; `DECISION_PENDING` / `DECISION_SKIPPED` (warn); `DECISION_ERROR` (fail: unreadable flow or an unrecognised gate report) | `tools/verify/check-decisions.js`, called from `tools/pad-sync/pad-admit.ps1` and `tools/pad-robin/flow-to-robin.js`; two-phase warn -> fail rollout (see below) |
 
 **Two-phase rollout for DECISION**: the check ships in `warn` mode first, reports every violation as
 `DECISION_PENDING` (warn) and does not block, so it can be introduced before every business flow declares its
-decisions. It flips to `fail` in one change — the `--mode` of `check-decisions.js` and of every caller
-(the `$decisionMode` variable in `pad-admit.ps1`, `flow-to-robin.js`, CI) — once every flow under
-`business/flows/` declares its decisions and every ledger record carries a `class`. On a public tree without
-`business/` there is no ledger to judge, so the check skips (reported as a `DECISION_SKIPPED` warn) and never
+decisions. It flips to `fail` in one change — the `--mode` of `check-decisions.js` and of the callers
+(the `$decisionMode` variable in `pad-admit.ps1`, `flow-to-robin.js`) — once every flow under
+`business/flows/` declares its decisions and every ledger record carries a `class`. CI is the exception and
+already runs the gate with `--mode=fail`: a public sample never cites a decision, so there fail mode can only
+catch a malformed setup, and it keeps a deleted ledger from silently turning the gate off. On a public tree
+without `business/` and with no citation, the check skips (reported as a `DECISION_SKIPPED` warn) and never
 invents a violation.
 
 > The `decisions` array in `flow.json` is a list of `{ "node": "<node-id>", "decision_id": "D-00X", "note": "..." }`
-> entries; one risk node may carry several entries, and one decision may cover several nodes. The ledger
-> `business/decisions.jsonl` requires `id`, `class` (`risk` / `standard`), `scope`, `decision`, `decided_by`
-> (`user` / `agent(recorded)`) and `decided_at` per line. Reversibility itself is still enforced by TRIGGER (ask);
-> DECISION only verifies that the person's decision is recorded.
+> entries; one risk node may carry several entries, and one decision may cover several nodes (one entry per
+> node, all pointing at the same `decision_id`). `decisions[].node` is what binds a decision to a node;
+> `scope` only names the subject for a reader, so a decision scoped to a script can still be cited by a flow
+> without a scope mismatch. The ledger `business/decisions.jsonl` requires `id`, `class` (`risk` /
+> `standard`), `scope` (`global` / `flow:<name>` / `script:<repo-relative path>`), `decision`, `decided_by`
+> (`user` / `agent(recorded)`) and `decided_at` per line. Reversibility itself is still enforced by TRIGGER
+> (ask); DECISION only verifies that the person's decision is recorded.
 
 ### 2.1 Fingerprint (FINGERPRINT) result codes
 

@@ -64,12 +64,13 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-adversarial-set.ps1'"
           if ($LASTEXITCODE -ne 0) { throw "adversarial-set gate failed: $LASTEXITCODE" }
 
-      - name: "Decision-ledger gate (skips on the public tree, which has no business layer)"
+      - name: "Decision-ledger gate (fail mode; a public sample never cites a decision)"
         shell: powershell
         run: |
-          # public tree has no business layer, so this gate reports skip and must exit 0;
-          # on a tree with business/ it validates every flow decisions entry against the ledger
-          node tools\verify\check-decisions.js tests\eval\fixtures\file-copy-text.json
+          # fail mode is safe here: the public tree has no business layer and no sample cites a decision,
+          # so the gate reports skip and exits 0. It also means a citation with no ledger to verify it
+          # (e.g. a deleted ledger) fails CI instead of silently passing.
+          node tools\verify\check-decisions.js tests\eval\fixtures\file-copy-text.json --mode=fail
           $code = $LASTEXITCODE
           Write-Host "check-decisions exit code: $code"
           if ($code -ne 0) { throw "decision-ledger gate failed: $code" }
