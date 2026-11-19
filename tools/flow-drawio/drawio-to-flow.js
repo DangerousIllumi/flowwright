@@ -13,6 +13,7 @@
  */
 
 const fs = require("fs");
+const path = require("path");
 
 const drawioPath = process.argv[2];
 const origPath = process.argv[3];
@@ -57,6 +58,10 @@ function parseAttrs(s) {
 }
 function safeJson(s, def) {
   try { return s ? JSON.parse(s) : def; } catch { return def; }
+}
+// New diagnostic output must stay pure ASCII (repo rule); escape anything else as \uXXXX.
+function ascii(s) {
+  return String(s).replace(/[^\x20-\x7e]/g, (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"));
 }
 
 // ── Rebuild nodes ─────────────────────────────────────────────────
@@ -152,6 +157,30 @@ for (const n of newNodes) {
   if (oFalse !== nFalse) changed.push(`node ${n.id} branch.false changed: ${oFalse} -> ${nFalse}`);
 }
 
+// ── Inherit the fields the canvas does not carry ──────────────────
+// The canvas only round-trips nodes/edges (name/description/trigger/variables come from <orig.flow.json>), so
+// budget, acceptance and decisions must be taken from an authoritative flow.json instead of being silently
+// dropped. Prefer the flow.json sitting next to the read-back target: for <base>.new.json that is <base>.json,
+// i.e. the file a real canvas round trip reads back into. Fall back to <orig.flow.json> only when it is absent,
+// and say so on stderr so a flow missing these fields is never produced silently.
+const outBase = path.basename(outPath);
+const sourceBase = outBase.endsWith(".new.json")
+  ? outBase.slice(0, -".new.json".length)
+  : outBase.endsWith(".json")
+    ? outBase.slice(0, -".json".length)
+    : outBase;
+const sourcePath = path.join(path.dirname(outPath), sourceBase + ".json");
+
+let source = orig;
+if (fs.existsSync(sourcePath)) {
+  source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+} else {
+  console.error(
+    "DRAWIO_ROUNDTRIP_NO_SOURCE_FLOW: no " + ascii(sourceBase + ".json") + " next to " + ascii(outBase) +
+    "; inherited decisions/budget/acceptance from " + ascii(origPath) + " instead"
+  );
+}
+
 // ── Assemble the new flow.json ────────────────────────────────────
 // Write edges back explicitly so the read-back does not lose explicit control flow (edges such as 5->38 and 8->52
 // that next cannot express)
@@ -167,6 +196,12 @@ const result = {
   }),
   nodes: newNodes,
 };
+
+// Copy the inherited fields only when the resolved source defines them: a missing field stays missing (never
+// invented as [] / {}) so the read-back faithfully mirrors the authoritative flow.json.
+for (const key of ["decisions", "budget", "acceptance"]) {
+  if (Object.prototype.hasOwnProperty.call(source, key)) result[key] = source[key];
+}
 
 fs.writeFileSync(outPath, JSON.stringify(result, null, 2), "utf8");
 

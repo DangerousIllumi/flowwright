@@ -139,3 +139,90 @@ test("end to end on the shipped example: added 0, removed 0, changed 0", () => {
   assert.strictEqual(back.status, 0, `reading the example canvas back failed: ${back.stderr}`);
   assert.match(back.stdout, /added: 0, removed: 0, changed: 0/, `the example must round-trip losslessly, got:\n${back.stdout}`);
 });
+
+// ── Fields the canvas does not carry ─────────────────────────────
+// The canvas has no place for decisions/budget/acceptance, so the read-back must inherit them from an
+// authoritative flow.json: <dir>/<name>.json for a <dir>/<name>.new.json target. Only when that file is absent
+// does it fall back to the <orig.flow.json> argument, and then it must say so on stderr.
+
+const BUDGET = { maxLoop: 4, note: "inherited budget" };
+const ACCEPTANCE = {
+  description: "inherited acceptance",
+  checks: [{ name: "result file", type: "fileExists", path: "result.txt", minBytes: 1 }],
+};
+const DECISIONS = [{ node: "2", decision_id: "D-001", note: "risk node accepted" }];
+
+/** The nodes are always the same; extras add the optional top-level fields. */
+function chainFlow(extras) {
+  return Object.assign(
+    { name: "inherit", trigger: { kind: "manual" }, nodes: [action("1", { next: ["2"] }), action("2")] },
+    extras || {}
+  );
+}
+
+function generateCanvas(flowPath, drawioPath) {
+  const gen = spawnSync(process.execPath, [GEN, flowPath, drawioPath], { encoding: "utf8" });
+  assert.strictEqual(gen.status, 0, `canvas generation failed: ${gen.stderr}`);
+}
+
+/** Read `drawioPath` back into <dir>/<name>.new.json (with `origPath` as the original) and return the result. */
+function readBack(dir, name, drawioPath, origPath) {
+  const backPath = path.join(dir, name + ".new.json");
+  const back = spawnSync(process.execPath, [READBACK, drawioPath, origPath, backPath], { encoding: "utf8" });
+  assert.strictEqual(back.status, 0, `read-back failed: ${back.stderr}`);
+  return { stdout: back.stdout, stderr: back.stderr, flow: JSON.parse(fs.readFileSync(backPath, "utf8")) };
+}
+
+test("read-back inherits decisions, budget and acceptance from the same-directory <name>.json", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "d2f-inherit-"));
+  const source = chainFlow({ budget: BUDGET, acceptance: ACCEPTANCE, decisions: DECISIONS });
+  const sourcePath = path.join(dir, "keep.json");
+  fs.writeFileSync(sourcePath, JSON.stringify(source, null, 2), "utf8");
+  const drawioPath = path.join(dir, "keep.drawio");
+  generateCanvas(sourcePath, drawioPath);
+
+  // <orig.flow.json> has none of the three fields, so they can only have come from keep.json.
+  const origPath = path.join(dir, "keep.orig.json");
+  fs.writeFileSync(origPath, JSON.stringify(chainFlow(), null, 2), "utf8");
+
+  const { flow, stderr } = readBack(dir, "keep", drawioPath, origPath);
+  assert.deepStrictEqual(flow.decisions, DECISIONS, "decisions must be inherited from keep.json");
+  assert.deepStrictEqual(flow.budget, BUDGET, "budget must be inherited from keep.json");
+  assert.deepStrictEqual(flow.acceptance, ACCEPTANCE, "acceptance must be inherited from keep.json");
+  assert.doesNotMatch(stderr, /DRAWIO_ROUNDTRIP_NO_SOURCE_FLOW/, "a present source flow must not warn");
+});
+
+test("without a same-directory <name>.json: fall back to the original flow and warn on stderr", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "d2f-fallback-"));
+  const orig = chainFlow({ budget: BUDGET, acceptance: ACCEPTANCE, decisions: DECISIONS });
+  const origPath = path.join(dir, "orig-flow.json");
+  fs.writeFileSync(origPath, JSON.stringify(orig, null, 2), "utf8");
+  const drawioPath = path.join(dir, "fallback.drawio");
+  generateCanvas(origPath, drawioPath);
+
+  // <dir>/fallback.json is deliberately absent, so the read-back target fallback.new.json has no source beside it.
+  const { flow, stderr } = readBack(dir, "fallback", drawioPath, origPath);
+  assert.deepStrictEqual(flow.decisions, DECISIONS, "decisions must fall back to the original flow");
+  assert.deepStrictEqual(flow.budget, BUDGET, "budget must fall back to the original flow");
+  assert.deepStrictEqual(flow.acceptance, ACCEPTANCE, "acceptance must fall back to the original flow");
+
+  const warningLines = stderr.split(/\r?\n/).filter((line) => line.startsWith("DRAWIO_ROUNDTRIP_NO_SOURCE_FLOW:"));
+  assert.strictEqual(warningLines.length, 1, `expected exactly one DRAWIO_ROUNDTRIP_NO_SOURCE_FLOW line, stderr:\n${stderr}`);
+  assert.match(warningLines[0], /no fallback\.json next to fallback\.new\.json/, "the warning must name the missing source");
+  assert.match(warningLines[0], /^[\x00-\x7f]*$/, "the warning line must be pure ASCII");
+});
+
+test("a source without the fields leaves them out of the output entirely", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "d2f-absent-"));
+  const plain = chainFlow(); // no decisions / budget / acceptance anywhere
+  const origPath = path.join(dir, "plain.json");
+  fs.writeFileSync(origPath, JSON.stringify(plain, null, 2), "utf8");
+  const drawioPath = path.join(dir, "plain.drawio");
+  generateCanvas(origPath, drawioPath);
+
+  // No <dir>/plain-back.json exists either, so the fallback source is the only candidate.
+  const { flow } = readBack(dir, "plain-back", drawioPath, origPath);
+  assert.strictEqual("decisions" in flow, false, "decisions must not be invented when no source defines it");
+  assert.strictEqual("budget" in flow, false, "budget must not be invented when no source defines it");
+  assert.strictEqual("acceptance" in flow, false, "acceptance must not be invented when no source defines it");
+});

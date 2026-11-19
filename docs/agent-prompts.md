@@ -102,6 +102,9 @@ Follow this structure strictly:
       "run_mode": "auto",
       "idempotent": true,
       "idempotency_note": "what happens on a rerun / what to watch out for (one or two sentences of Chinese; required only when idempotent=false)",
+      "reversible": true,
+      "reversibility_note": "how the effect is undone or how the deleted/overwritten data is recovered (required when reversible=false or intent_destructive=true)",
+      "intent_destructive": false,
       "inputs": [
         { "dir": "{{config.<KEY>}}", "pattern": "*.csv", "required": true }
       ],
@@ -147,6 +150,19 @@ Field notes:
   unlocks any automated behaviour.
   Both values must be answered by the user node by node; without answers do not generate flow.json, and
   `eval-flow.js` fails when they are missing.
+- **reversible: required on every node**, with no default. `true` means the consequence can be undone or
+  recovered (a deletion can be recreated, a saved attachment re-exported); `false` means it cannot be undone
+  (a mail has been sent, a document has been posted). A node that does not declare `reversible` is an `ask`
+  in admission (exit 2, blocks delivery), and a `reversible=false` node must also carry `reversibility_note`.
+- **reversibility_note: required when `reversible=false`** and when `intent_destructive=true` (see below).
+  It states how the effect is undone or recovered, for example "a posting needs a reversal document to be
+  undone" or "a cleanup removes the directory, but a rerun regenerates the same batch".
+- **intent_destructive: required on every `Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` node that
+  declares `intent`**, with no default. `pad_hint` cannot tell a read script from a delete script, so the
+  boolean must be declared from the script source: `true` when the script deletes or overwrites files,
+  directories, rows or cells, `false` when it only reads or creates new files. When it is `true`,
+  `reversibility_note` is also required, and a known posting intent (`sap-migo`, `posting`) must not be
+  declared `false`.
 **Control-flow nodes** (pad_hint is `IF` / `LOOP` / `SWITCH`; the generator recognizes the node shape and emits
 built-in statements):
 

@@ -238,9 +238,11 @@ Describe 'pad-admit TRIGGER (observation period warns)' {
         $trg = [pscustomobject]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $f = [pscustomobject]@{ nodes = $nodes; trigger = $trg }
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
-        $r[0].status | Should Be 'fail'
-        $r[0].code | Should Be 'TRIGGER_UNATTENDED_CONFIRM'
-        ($r[0].evidence -join ' ') | Should Match 'node 9'
+        # Select by code: the node also lacks reversible now, so the confirm failure is no longer necessarily the first entry
+        $hit = @($r | Where-Object { $_.code -eq 'TRIGGER_UNATTENDED_CONFIRM' })
+        $hit.Count | Should Be 1
+        $hit[0].status | Should Be 'fail'
+        ($hit[0].evidence -join ' ') | Should Match 'node 9'
     }
 
     It 'schedule without time: fail + TRIGGER_INVALID' {
@@ -285,15 +287,15 @@ Describe 'pad-admit TRIGGER (observation period warns)' {
         ($r[0].evidence -join ' ') | Should Match '过账需冲销凭证'
     }
 
-    It 'idempotent=false without reversible: warn + TRIGGER_MISSING_REVERSIBILITY' {
+    It 'idempotent=false without reversible on a non-script node: ask + REVERSIBILITY_UNDECLARED (the old warn is replaced)' {
         $nodes = @(
             [pscustomobject]@{ id = '29'; pad_hint = 'Outlook.SendEmailThroughOutlook.SendEmail'; run_mode = 'auto'; idempotent = $false }
         )
         $trg = [pscustomobject]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $f = [pscustomobject]@{ nodes = $nodes; trigger = $trg }
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
-        $r[0].status | Should Be 'warn'
-        $r[0].code | Should Be 'TRIGGER_MISSING_REVERSIBILITY'
+        $r[0].status | Should Be 'ask'
+        $r[0].code | Should Be 'REVERSIBILITY_UNDECLARED'
         ($r[0].evidence -join ' ') | Should Match 'node 29'
     }
 
@@ -415,8 +417,8 @@ Describe 'pad-admit no longer defaults to a concrete business flow' {
         $text | Should Match 'ADMIT_ERROR'
         $text | Should Match 'E_FLOW_FILE_REQUIRED'
         $text | Should Match '-FlowFile'
-        # It must fail before the flow definition is read, so the summary of 14 admission checks must not be printed
-        $text | Should Not Match '"total":14'
+        # It must fail before the flow definition is read, so the summary of the 17 admission checks must not be printed
+        $text | Should Not Match '"total":17'
         $text | Should Not Match 'POLICY_'
     }
 }
@@ -487,5 +489,130 @@ Describe 'pad-admit intent_destructive (script nodes that delete or overwrite da
         $hit[0].status | Should Be 'ask'
         ($hit[0].evidence -join ' ') | Should Match 'node 1'
         ($hit[0].evidence -join ' ') | Should Match 'RunDOSCommand'
+    }
+}
+
+# The reverse direction (B1): script nodes keep TRIGGER_MISSING_REVERSIBILITY, every other node type gets
+# REVERSIBILITY_UNDECLARED, each missing node is reported exactly once, and the full script exits 2 on an ask.
+function New-FlowMissingReversible {
+    param([string]$Dir, [string]$NodeId = '1')
+    # Start from the repository example (it passes admission end to end) and remove one reversible declaration,
+    # so the fixture differs from a passing flow in exactly the declaration under test.
+    $src = Join-Path $repo 'tools\flow-drawio\example-flow.json'
+    $flow = [IO.File]::ReadAllText($src, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    $node = @($flow.nodes | Where-Object { [string]$_.id -eq $NodeId })[0]
+    $node.PSObject.Properties.Remove('reversible')
+    $path = Join-Path $Dir ('flow-' + [guid]::NewGuid().ToString('N') + '.json')
+    [IO.File]::WriteAllText($path, ($flow | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+    return $path
+}
+
+function New-RobinForFlow {
+    param([string]$FlowFile, [string]$Dir)
+    $robin = Join-Path $Dir ('robin-' + [guid]::NewGuid().ToString('N') + '.robin')
+    $code = 0
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') $FlowFile $robin 2>$null | Out-Null
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $eap }
+    if ($code -ne 0) { throw "flow-to-robin.js failed with exit code $code" }
+    return $robin
+}
+
+function Invoke-AdmitE2E {
+    param([string]$FlowFile, [string]$RobinFile, [string]$ApproveFile, [string]$Dir)
+    $out = Join-Path $Dir ('admit-' + [guid]::NewGuid().ToString('N') + '.txt')
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repo 'tools\pad-sync\pad-admit.ps1'), '-FlowFile', $FlowFile)
+    if ($RobinFile) { $argv += @('-RobinFile', $RobinFile) }
+    if ($ApproveFile) { $argv += @('-ApproveFile', $ApproveFile) }
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & powershell @argv *> $out } finally { $ErrorActionPreference = $eap }
+    $code = $LASTEXITCODE
+    $lines = @([IO.File]::ReadAllLines($out, [Text.Encoding]::UTF8))
+    $line = @($lines | Where-Object { $_ -match '^PAD_ADMIT_RESULT=' })
+    $res = $null
+    if ($line.Count -gt 0) { $res = ($line[0].Substring('PAD_ADMIT_RESULT='.Length) | ConvertFrom-Json) }
+    return [pscustomobject]@{ code = $code; result = $res; text = ($lines -join "`n") }
+}
+
+Describe 'pad-admit REVERSIBILITY_UNDECLARED (every node declares reversible)' {
+
+    It 'plain action node without reversible: ask + REVERSIBILITY_UNDECLARED, not TRIGGER_MISSING_REVERSIBILITY' {
+        $nodes = @(
+            [pscustomobject]@{ id = '1'; pad_hint = 'Outlook.Launch'; run_mode = 'auto'; idempotent = $true }
+        )
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = [pscustomobject]@{ kind = 'manual' } }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $hit = @($r | Where-Object { $_.code -eq 'REVERSIBILITY_UNDECLARED' })
+        $hit.Count | Should Be 1
+        $hit[0].status | Should Be 'ask'
+        $hit[0].message | Should Match 'does not declare reversible'
+        ($hit[0].evidence -join ' ') | Should Match 'node 1'
+        @($r | Where-Object { $_.code -eq 'TRIGGER_MISSING_REVERSIBILITY' }).Count | Should Be 0
+    }
+
+    It 'script node missing reversible still reports TRIGGER_MISSING_REVERSIBILITY and never REVERSIBILITY_UNDECLARED' {
+        $nodes = @(
+            [pscustomobject]@{ id = '3'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'
+                idempotent = $true; intent = 'mb51-export'; intent_destructive = $false }
+        )
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = [pscustomobject]@{ kind = 'manual' } }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $scriptHit = @($r | Where-Object { $_.code -eq 'TRIGGER_MISSING_REVERSIBILITY' })
+        $scriptHit.Count | Should Be 1
+        $scriptHit[0].status | Should Be 'ask'
+        ($scriptHit[0].evidence -join ' ') | Should Match 'node 3'
+        ($scriptHit[0].evidence -join ' ') | Should Match 'RunDOSCommand'
+        @($r | Where-Object { $_.code -eq 'REVERSIBILITY_UNDECLARED' }).Count | Should Be 0
+    }
+
+    It 'a plain and a script node missing reversible are reported exactly once each (no double reporting)' {
+        $nodes = @(
+            [pscustomobject]@{ id = '7'; pad_hint = 'Outlook.Launch'; run_mode = 'auto'; idempotent = $true },
+            [pscustomobject]@{ id = '8'; pad_hint = 'Scripting.RunVBScript.RunVBScript'; run_mode = 'auto'
+                idempotent = $true; intent = 'export'; intent_destructive = $false }
+        )
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = [pscustomobject]@{ kind = 'manual' } }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $declared = @($r | Where-Object { $_.code -eq 'REVERSIBILITY_UNDECLARED' })
+        $scripts = @($r | Where-Object { $_.code -eq 'TRIGGER_MISSING_REVERSIBILITY' })
+        $declared.Count | Should Be 1
+        $scripts.Count | Should Be 1
+        # Each node appears in exactly one of the two reports
+        ($declared[0].evidence -join ' ') | Should Match 'node 7'
+        ($declared[0].evidence -join ' ') | Should Not Match 'node 8'
+        ($scripts[0].evidence -join ' ') | Should Match 'node 8'
+        ($scripts[0].evidence -join ' ') | Should Not Match 'node 7'
+    }
+
+    It 'full admission on a plain node without reversible: the script exits 2 (the ask blocks delivery)' {
+        $flow = New-FlowMissingReversible -Dir $TestDrive -NodeId '1'
+        $robin = New-RobinForFlow -FlowFile $flow -Dir $TestDrive
+        $run = Invoke-AdmitE2E -FlowFile $flow -RobinFile $robin -Dir $TestDrive
+        $run.code | Should Be 2
+        $trigger = @($run.result.checks | Where-Object { $_.id -eq 'TRIGGER' })
+        $hit = @($trigger | Where-Object { $_.status -eq 'ask' -and $_.code -eq 'REVERSIBILITY_UNDECLARED' })
+        $hit.Count | Should Be 1
+        ($hit[0].evidence -join ' ') | Should Match 'node 1'
+        $run.result.summary.ask | Should Be 1
+        $run.result.summary.fail | Should Be 0
+    }
+
+    It 'the admission check list has 17 entries and includes DECISION' {
+        $flow = Join-Path $repo 'tools\flow-drawio\example-flow.json'
+        $robin = New-RobinForFlow -FlowFile $flow -Dir $TestDrive
+        $approve = Join-Path $TestDrive ('approve-' + [guid]::NewGuid().ToString('N') + '.jsonl')
+        $hash = (Get-FileHash -LiteralPath $robin -Algorithm SHA256).Hash.ToLower()
+        [IO.File]::WriteAllText($approve, ('{"robin":"' + $hash + '"}'), (New-Object Text.UTF8Encoding($false)))
+        $run = Invoke-AdmitE2E -FlowFile $flow -RobinFile $robin -ApproveFile $approve -Dir $TestDrive
+        $run.code | Should Be 0
+        @($run.result.checks).Count | Should Be 17
+        $ids = @($run.result.checks | ForEach-Object { $_.id })
+        ($ids -contains 'DECISION') | Should Be $true
+        $ids[($ids.Count - 1)] | Should Be 'DECISION'
+        @($run.result.checks | Where-Object { $_.id -eq 'DECISION' }).Count | Should Be 1
     }
 }

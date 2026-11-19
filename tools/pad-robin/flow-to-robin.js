@@ -16,7 +16,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 
 // ── CLI arguments ─────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -80,6 +80,37 @@ try {
   } else {
     throw e;
   }
+}
+
+// ── Decision-ledger gate (A6) ─────────────────────────────────
+// Every risk node needs a decision recorded in business/decisions.jsonl and approved by a person, so the
+// flow is judged by the single implementation in tools/verify/check-decisions.js before anything is written.
+// Two-phase rollout: the mode is one named constant on purpose. It flips to "fail" together with the
+// default of check-decisions.js and the callers (pad-admit.ps1, CI) in one change, once every flow under
+// business/flows/ declares its decisions and every ledger record carries a class.
+const DECISION_GATE_MODE = "warn";
+const repoRoot = path.resolve(__dirname, "..", "..");
+const decisionGatePath = path.join(repoRoot, "tools", "verify", "check-decisions.js");
+// --no-check only skips the static self-check, so this gate runs in every generation path.
+if (fs.existsSync(decisionGatePath)) {
+  const gate = spawnSync(process.execPath, [decisionGatePath, flowPath, "--mode=" + DECISION_GATE_MODE], { encoding: "utf8" });
+  // Pipe the child report through so the ASCII summary is visible in this process's output
+  if (gate.stdout) process.stdout.write(gate.stdout);
+  if (gate.stderr) process.stderr.write(gate.stderr);
+  if (gate.error) {
+    console.error("=== Decision-ledger gate could not run ===");
+    console.error("  x " + gate.error.message);
+    console.error("\nnothing was generated. Fix the environment and run again.");
+    process.exit(1);
+  }
+  if (gate.status !== 0) {
+    console.error("=== Decision-ledger gate rejected the flow ===");
+    console.error(`  x check-decisions.js exited ${gate.status}; the report above lists the violations`);
+    console.error("\n1 error(s); nothing was generated. Fix the decisions and the ledger, then run again.");
+    process.exit(1);
+  }
+} else {
+  console.error("[warning] check-decisions.js not found; skipping the decision gate");
 }
 
 // Handle type → name of the upstream variable that produces it (filled in at runtime)

@@ -86,18 +86,20 @@ instead of adding. Side-effect guards, idempotency, audit trails and error handl
 ## 3. Standard workflow (follow in order, do not skip steps)
 
 ```powershell
-# 1) Design: follow skills/pad-flow-designer "mandatory answers before generating flow.json"
-#    Ask, per node, for "run mode (auto/confirm/observe)" and "idempotency (true/false + idempotency key)".
-#    Do not generate business\flows\<name>.json if the user has not answered these.
+# 1) Design: follow skills\pad-flow-designer\SKILL.md section 3 "mandatory answers before generating flow.json".
+#    Ask each mandatory answer there node by node; do not generate business\flows\<name>.json
+#    if the user has not answered them.
 # 2) Canvas (optional, for human review)
 node tools\flow-drawio\flow-to-drawio.js business\flows\<name>.json business\flows\<name>.drawio
-# 3) Generate
+# 3) Declaration completeness (exit 1 = a mandatory answer is missing; do not generate yet)
+node tools\pad-robin\eval-flow.js business\flows\<name>.json
+# 4) Generate
 node tools\pad-robin\flow-to-robin.js business\flows\<name>.json out.robin
-# 4) Static checks (0 errors required to continue)
+# 5) Static checks (0 errors required to continue)
 node tools\pad-robin\check.js out.robin
-# 5) Admission (read-only; deliver only with fail=0 and ask=0 — ask exits with code 2 and also blocks)
+# 6) Admission (read-only; deliver only with fail=0 and ask=0 — ask exits with code 2 and also blocks)
 .\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<name>.json -RobinFile out.robin
-# 6) Structural evaluation (cases live in business\tests\eval\; only neutral samples go in the public repo)
+# 7) Structural evaluation (cases live in business\tests\eval\; only neutral samples go in the public repo)
 node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 ```
 
@@ -120,7 +122,9 @@ need a clean exit status: `Invoke-Pester tests; exit 0`. The CI step already end
 | `[BAD] edges disagree with next/branch` (tool output) | The diagram edges drifted from the generation structure | Add the missing `edges` entries |
 | Admission `POLICY_DENY` | A deny rule in `business/policy.json` was hit | Remove the action or change the condition; do not bypass it |
 | Admission `MISSING_INTENT` / `BUDGET_UNKNOWN` | A mandatory declaration is missing | Add `intent` / `budget` |
-| Structural evaluation: missing declaration node / `run_mode=` | "Run mode / idempotency" was never answered | Ask the user again and add `run_mode` / `idempotent` / `idempotency_note`; never fill them in by default |
+| Admission `TRIGGER_MISSING_REVERSIBILITY` / `REVERSIBILITY_UNDECLARED` | A node does not declare `reversible`; this is an ask (exit 2) and blocks delivery | Ask the user; add `reversible` to every node, and `reversibility_note` when it is `false`; never fill either in by default |
+| Decision gate `RISK_NODE_WITHOUT_DECISION` | A risk node (`reversible=false` or `intent_destructive=true`) has no `decisions` entry | Record the user's decision in `business/decisions.jsonl` (`class=risk`, `decided_by=user`) and add the matching `decisions` entry to `flow.json`; do not invent the approval |
+| Structural evaluation: missing declaration / `run_mode=` / `idempotent=` / `reversible=` | A mandatory node declaration was never answered | Ask the user again and add the missing `run_mode` / `idempotent` / `reversible` / `intent_destructive`; never fill them in by default |
 | `[error] PAD_Robin_ActionKB.json not found` (tool output) | `setup.ps1` was not run | Run step 0 first |
 
 ## 5. Things you explicitly do not do

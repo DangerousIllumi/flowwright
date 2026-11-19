@@ -64,6 +64,16 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-adversarial-set.ps1'"
           if ($LASTEXITCODE -ne 0) { throw "adversarial-set gate failed: $LASTEXITCODE" }
 
+      - name: "Decision-ledger gate (skips on the public tree, which has no business layer)"
+        shell: powershell
+        run: |
+          # public tree has no business layer, so this gate reports skip and must exit 0;
+          # on a tree with business/ it validates every flow decisions entry against the ledger
+          node tools\verify\check-decisions.js tests\eval\fixtures\file-copy-text.json
+          $code = $LASTEXITCODE
+          Write-Host "check-decisions exit code: $code"
+          if ($code -ne 0) { throw "decision-ledger gate failed: $code" }
+
       - name: Install Python 3.13
         uses: actions/setup-python@v5
         with:
@@ -214,7 +224,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "admit gate failed: $LASTEXITCODE" }
 
       - name: Generator and comparator unit tests
-        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js tools\pad-robin\lint-robin.test.js
+        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js tools\pad-robin\lint-robin.test.js tools\verify\check-decisions.test.js
 
       - name: Canvas read-back unit tests
         run: node --test tools\flow-drawio\drawio-to-flow.test.js

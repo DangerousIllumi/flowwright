@@ -94,6 +94,6 @@ Machine-consumed output keeps its ASCII anchor; see
 - [ ] Is any fact restated from somewhere else? Delete the copy and replace it with a link.
 - [ ] Do newly added outputs, logs and assertions carry an ASCII anchor?
 - [ ] Does any script whose stdout or stderr lands in a PAD variable print ASCII only (section 3)?
-- [ ] Do the numbers match the code: 16 admission checks, 18 public samples (11 flows + 6 triggers +
+- [ ] Do the numbers match the code: 17 admission checks, 18 public samples (11 flows + 6 triggers +
       1 reversibility counterexample), 12 `*.cases.json` files, the CI step order and names.
 - [ ] Are identifiers, parameter names, rule ids and exit codes still English?

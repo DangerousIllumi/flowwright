@@ -159,7 +159,8 @@ commands in this section:
 node tools\flow-drawio\flow-to-drawio.js business\flows\<name>.json business\flows\<name>.drawio
 node tools\flow-drawio\check-flow.js business\flows\<name>.json
 
-# 2) Generate (current adapter: IR → .robin)
+# 2) Declaration completeness (exit 1 = a mandatory answer is still missing; do not generate yet) then generate
+node tools\pad-robin\eval-flow.js business\flows\<name>.json
 node tools\pad-robin\flow-to-robin.js business\flows\<name>.json out.robin
 
 # 3) Static check the artifact (0 errors required to continue; PAD adapter)

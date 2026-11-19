@@ -18,7 +18,7 @@
 | # | Check | Input | Pass condition | Failure code | Current implementation |
 |---|---|---|---|---|---|
 | 1 | REGISTRY | Node `pad_hint` in `flow.json` | Every action exists in the KB | `UNKNOWN_ACTION` | `flow-to-robin.js` safety gate |
-| 2 | ARGS | Node `params` | Parameter names exist, required ones present, types match | `UNKNOWN_PARAM` / `MISSING_PARAM` / `TYPE_MISMATCH` | `flow-to-robin.js` |
+| 2 | ARGS | Node `params` | Parameter names exist, required ones present, types match | `UNKNOWN_PARAM` / `TYPE_MISMATCH` (fail); `MISSING_PARAM` (warn: required parameters omitted at generation time) | `flow-to-robin.js`, `pad-admit.ps1` |
 | 3 | SELECTOR | Action metadata | No action in the flow has `needs_ui_selector: true`. There is no allowlist and no exemption, so the result is only pass or fail | `UI_SELECTOR` | `flow-to-robin.js`, `pad-admit.ps1` |
 | 4 | STATIC | `.robin` | `check-flows.js` reports 0 errors | `STATIC_SYNTAX` | `tools/pad-robin/check.js` |
 | 5 | EDGE | `flow.json` | `edges` covers everything derived from `next/branch`, with no dangling or duplicate edges | `EDGE_DRIFT` / `EDGE_DANGLING` / `EDGE_DUPLICATE` | `tools/flow-drawio/check-flow.js` |
@@ -31,8 +31,23 @@
 | 12 | FINGERPRINT | SHA256 of three files + baseline | Matches the approval record or `business/fingerprints/<flow name>.json` | `pass` / `FINGERPRINT_*` (see 2.1) | `PadFingerprint.psm1` (mismatch is fail; a missing baseline is warn in report mode and fail with `-Unattended`) |
 | 13 | SCRIPT_FINGERPRINT | Scripts referenced by the flow + the baseline `scripts`/`external` sections | Matches the baseline | `FINGERPRINT_*` / `SCRIPT_FINGERPRINT_LEGACY` | `PadFingerprint.psm1` (a missing or legacy baseline is always warn; FINGERPRINT gates first) |
 | 14 | INTENT | Node `intent` / `tags` | Generic actions such as `RunDOSCommand` and `RunVBScript` must carry a semantic tag that policy can match | `MISSING_INTENT` | `pad-admit.ps1` (a missing intent is fail; policy supports `when.intent`) |
-| 15 | TRIGGER | The `trigger` block in `flow.json` + node reversibility + script destructive declarations | Kind domain, required fields, directory must come from a config reference, unattended runs may not require human confirmation; `RunDOSCommand`/`RunVBScript` must declare `reversible` and `intent_destructive` | `TRIGGER_*` (see 2.2, 2.2b) | `pad-admit.ps1` (an undeclared trigger is warn during the observation period; script nodes missing `reversible` or `intent_destructive` are ask) |
+| 15 | TRIGGER | The `trigger` block in `flow.json` + node reversibility + script destructive declarations | Kind domain, required fields, directory must come from a config reference, unattended runs may not require human confirmation; every node must declare `reversible`, and `RunDOSCommand`/`RunVBScript` must also declare `intent_destructive` | `TRIGGER_*` (see 2.2, 2.2b) + `REVERSIBILITY_UNDECLARED` | `pad-admit.ps1` (an undeclared trigger is warn during the observation period; every node missing `reversible` is ask, and script nodes missing `intent_destructive` are ask) |
 | 16 | INPUT | Node-level `inputs` declaration + `config` | Directory must come from a config reference; `required` declared explicitly; a required file with 0 candidates fails; ≥2 candidates is always ambiguous | `INPUT_*` (see 2.3) | `pad-admit.ps1` (undeclared is warn, for backward compatibility) |
+| 17 | DECISION | `flow.json` + `business/decisions.jsonl` | Every risk node (`reversible=false` or `intent_destructive=true`) is covered by a `decisions` entry whose ledger record exists, is `class=risk` with `decided_by=user`, and is scoped `global` or to this flow | `RISK_NODE_WITHOUT_DECISION` / `RISK_NODE_DECISION_NOT_RISK` / `DECISION_NOT_IN_LEDGER` / `DECISION_NOT_USER_APPROVED` / `DECISION_SCOPE_MISMATCH` / `DECISION_CLASS_INVALID` / `DECISION_DECIDED_BY_INVALID` / `DECISION_ENTRY_INVALID` / `DECISION_NODE_NOT_FOUND`; `DECISION_PENDING` / `DECISION_SKIPPED` (warn); `DECISION_ERROR` (fail: unreadable flow or an unrecognised gate report) | `tools/verify/check-decisions.js`, called from `tools/pad-sync/pad-admit.ps1` and `tools/pad-robin/flow-to-robin.js`; two-phase warn -> fail rollout (see below) |
+
+**Two-phase rollout for DECISION**: the check ships in `warn` mode first, reports every violation as
+`DECISION_PENDING` (warn) and does not block, so it can be introduced before every business flow declares its
+decisions. It flips to `fail` in one change — the `--mode` of `check-decisions.js` and of every caller
+(the `$decisionMode` variable in `pad-admit.ps1`, `flow-to-robin.js`, CI) — once every flow under
+`business/flows/` declares its decisions and every ledger record carries a `class`. On a public tree without
+`business/` there is no ledger to judge, so the check skips (reported as a `DECISION_SKIPPED` warn) and never
+invents a violation.
+
+> The `decisions` array in `flow.json` is a list of `{ "node": "<node-id>", "decision_id": "D-00X", "note": "..." }`
+> entries; one risk node may carry several entries, and one decision may cover several nodes. The ledger
+> `business/decisions.jsonl` requires `id`, `class` (`risk` / `standard`), `scope`, `decision`, `decided_by`
+> (`user` / `agent(recorded)`) and `decided_at` per line. Reversibility itself is still enforced by TRIGGER (ask);
+> DECISION only verifies that the person's decision is recorded.
 
 ### 2.1 Fingerprint (FINGERPRINT) result codes
 
@@ -68,7 +83,8 @@ does not query the local scheduled-task registration state.
 | `TRIGGER_PATH_LITERAL` | fail | `file.dir` hard-codes a path instead of using a `{{config.<KEY>}}` reference |
 | `TRIGGER_UNATTENDED_CONFIRM` | fail | A non-`manual` trigger with a `run_mode=confirm` node, without `assisted=true` |
 | `TRIGGER_UNATTENDED_IRREVERSIBLE` | warn | A non-`manual` trigger with a `reversible=false` node (the consequence cannot be withdrawn); evidence lists the node id and `reversibility_note` |
-| `TRIGGER_MISSING_REVERSIBILITY` | **ask** (script nodes) / warn (other nodes) | A `RunDOSCommand`/`RunVBScript` node declares no `reversible` — the gate cannot tell a read script from a delete script from `pad_hint` alone, so it asks for the declaration (ask). For non-script nodes with `idempotent=false` and no `reversible`, it is a warn |
+| `TRIGGER_MISSING_REVERSIBILITY` | **ask** | A `RunDOSCommand`/`RunVBScript` node declares no `reversible` — the gate cannot tell a read script from a delete script from `pad_hint` alone, so it asks for the declaration |
+| `REVERSIBILITY_UNDECLARED` | **ask** | Any other node type declares no `reversible`. Every node must declare it and there is no default, so admission asks (exit 2, blocks delivery) instead of assuming "safe by default" |
 | `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn (compatibility alias, **narrowed**) | The name is kept only while existing cases/callers still reference the old code; the decision is no longer triggered by `idempotent=false` but by the two reversibility rules above |
 | `TRIGGER_NO_GATE` | warn | `schedule` without `gate`; it would still run on holidays |
 | `TRIGGER_AMBIGUOUS` | fail | The task name is already taken by another flow under `business/flows` |
@@ -137,7 +153,7 @@ Level rationale:
 
 | Stage | Which checks run | Trigger point |
 |---|---|---|
-| Offline (before generating) | 1–16 (`pad-admit` runs them in one pass; missing inputs make the corresponding check warn) | `pad-admit` / `flow-to-robin` / CI |
+| Offline (before generating) | 1–17 (`pad-admit` runs them in one pass; missing inputs make the corresponding check warn) | `pad-admit` / `flow-to-robin` / CI |
 | Before a run | Reuses 7, 8, 11, 12, 16 | `pad-sync`, before injection |
 | After a run | Acceptance criteria | `pad-sync`, after the run (G6) |
 

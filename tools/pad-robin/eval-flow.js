@@ -575,32 +575,86 @@ if (require.main === module) {
   const asJson = args.includes("--json");
   const target = args.find((a) => !a.startsWith("--"));
   if (!target) {
-    console.error("Usage: node eval-flow.js <cases.json | directory> [--json]");
+    console.error("Usage: node eval-flow.js <cases.json | flow.json | directory> [--json]");
     process.exit(2);
   }
 
+  // A file counts as a flow definition when it parses and has a nodes array; companion artifacts in the same
+  // directory (acceptance / requirements / schema / deploy diffs) are skipped without becoming a read failure.
+  const isFlowDefinition = (file) => {
+    try {
+      const flow = JSON.parse(fs.readFileSync(file, "utf8"));
+      return isPlainObject(flow) && Array.isArray(flow.nodes);
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // Two modes, chosen by the target:
+  //   cases mode       = a *.cases.json file, or a directory holding at least one *.cases.json (unchanged:
+  //                      each case file still runs declarations-complete first, then its own assertions)
+  //   declaration-only = a plain flow.json, or a directory with no *.cases.json: only the node must-answer
+  //                      completeness is checked, so the gate can be used without writing a case file
   let specs = [];
+  let declarationFiles = [];
   try {
     const st = fs.statSync(target);
     if (st.isDirectory()) {
-      for (const f of fs.readdirSync(target).filter((x) => x.endsWith(".cases.json")).sort()) {
-        specs.push(loadCases(path.join(target, f)));
+      const caseNames = fs.readdirSync(target).filter((x) => x.endsWith(".cases.json")).sort();
+      if (caseNames.length > 0) {
+        for (const f of caseNames) specs.push(loadCases(path.join(target, f)));
+      } else {
+        declarationFiles = fs
+          .readdirSync(target)
+          .filter((x) => x.endsWith(".json") && !x.endsWith(".cases.json"))
+          .sort()
+          .map((x) => path.join(target, x))
+          .filter(isFlowDefinition);
+        if (declarationFiles.length === 0) {
+          console.error(`[error] no flow definition (*.json with a nodes array) under ${target}`);
+          process.exit(2);
+        }
       }
-    } else {
+    } else if (target.endsWith(".cases.json")) {
       specs.push(loadCases(target));
+    } else if (target.endsWith(".json")) {
+      if (!isFlowDefinition(target)) {
+        console.error(`[error] not a flow definition (*.json with a nodes array): ${target}`);
+        process.exit(2);
+      }
+      declarationFiles = [target];
+    } else {
+      console.error(`[error] unsupported target (expected *.cases.json, *.json, or a directory): ${target}`);
+      process.exit(2);
     }
   } catch (e) {
     console.error(`[error] read failed: ${e.message}`);
-    process.exit(2);
-  }
-  if (specs.length === 0) {
-    console.error(`[error] no *.cases.json under ${target}`);
     process.exit(2);
   }
 
   const report = [];
   let total = 0;
   let passed = 0;
+
+  // Declaration-only mode: one synthetic "declarations-complete" case per flow, which is exactly the check
+  // cases mode always runs first; the report shape stays {total, passed, files:[{flow, cases:[...]}]}.
+  if (declarationFiles.length > 0) {
+    const requirement = "every node explicitly declares run_mode / idempotent / reversible";
+    for (const file of declarationFiles) {
+      let flow;
+      try {
+        flow = JSON.parse(fs.readFileSync(file, "utf8"));
+      } catch (e) {
+        console.error(`[error] read failed: ${file}: ${e.message}`);
+        process.exit(2);
+      }
+      const result = OPS.declarationsComplete(flow);
+      total += 1;
+      if (result.ok) passed += 1;
+      report.push({ flow: file, cases: [{ id: "declarations-complete", requirement, ok: result.ok, results: [result] }] });
+    }
+  }
+
   for (const s of specs) {
     let flow;
     try {
@@ -651,7 +705,8 @@ if (require.main === module) {
         for (const r of c.results.filter((x) => !x.ok)) console.log(`        assertion failed: ${r.detail}`);
       }
     }
-    console.log(`[eval-flow] passed ${passed} / ${total} (${specs.length} flow samples)`);
+    const samples = declarationFiles.length > 0 ? declarationFiles.length : specs.length;
+    console.log(`[eval-flow] passed ${passed} / ${total} (${samples} flow samples)`);
   }
   process.exit(passed === total && report.every((f) => !f.error) ? 0 : 1);
 }

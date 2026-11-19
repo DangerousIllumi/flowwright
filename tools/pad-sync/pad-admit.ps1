@@ -13,7 +13,7 @@
 #
 # Exit codes: 0 all passed / 1 at least one fail / 2 only ask
 # Differences from the doc (more practical in report mode, and recorded):
-#   - An undeclared BUDGET is a warn, not a fail (otherwise every existing flow would fail)
+#   - An undeclared BUDGET is a fail (BUDGET_UNKNOWN: budget unknown is treated as exceeded)
 #   - Missing INTENT is a warn (the policy can still fall back to paramsMatch)
 #   - FINGERPRINT mismatch against the baseline/approval record fails; a missing baseline warns in report mode
 #     but stays fail under -Unattended (the release/deploy/schedule paths)
@@ -349,17 +349,19 @@ function Invoke-TriggerCheck {
                 "node $($_.id) pad_hint=$($_.pad_hint) intent=$intent reversible not declared"
             }) }
     }
-    # idempotent=false without a reversible declaration (non-script nodes): ask for the declaration instead of papering over it with a default
+    # Every other node type (action/if/loop/break/guard/switch/wait) must declare reversible too:
+    # reversible is orthogonal to idempotent, so a rerun-safe node may still leave consequences that cannot be undone.
+    # Script nodes are excluded here: the block above already reports them, so each missing node is reported exactly once.
     $missingRev = @($nodes | Where-Object {
-        $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false -and
-        -not (Test-PropExists $_ 'reversible') -and
+        $_ -and -not (Test-PropExists $_ 'reversible') -and
         -not ($_.pad_hint -match '^Scripting\.(RunDOSCommand|RunVBScript)')
     })
     if ($missingRev.Count -gt 0) {
-        $issues += @{ status = 'warn'; code = 'TRIGGER_MISSING_REVERSIBILITY'
-            message = 'node idempotent=false but reversible is not declared; declare whether the effect can be rolled back'
+        $issues += @{ status = 'ask'; code = 'REVERSIBILITY_UNDECLARED'
+            message = 'node does not declare reversible; declare whether the effect can be rolled back'
             evidence = @($missingRev | ForEach-Object {
-                "node $($_.id) idempotent=false, reversible not declared"
+                $hint = if (Test-PropExists $_ 'pad_hint') { [string]$_.pad_hint } else { '(no pad_hint)' }
+                "node $($_.id) pad_hint=$hint reversible not declared"
             }) }
     }
 
@@ -910,7 +912,7 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'POLICY' 'warn' 'POLICY_MISSING' 'business\policy.json not found; skipping policy evaluation' @()
     }
 
-    # 8 BUDGET (undeclared is a warn: report mode must not block existing flows)
+    # 8 BUDGET (an undeclared budget is a fail: an unknown budget is treated as exceeded)
     if ($Flow.budget) {
         $b = $Flow.budget
         $ev = @()
@@ -1036,6 +1038,44 @@ function Invoke-AdmitChecks {
 
     # 16 INPUT (node-level input-file declarations: read-only enumeration; missing files / multiple candidates are reported before the run)
     $checks += @(Invoke-InputCheck -Flow $Flow -Config $Config -ConfigFile $Paths.ConfigFile)
+
+    # 17 DECISION (decision-ledger gate: every risk node must be covered by a recorded decision)
+    # Two-phase rollout: the gate starts in warn mode, so it reports without blocking yet. Flipping it to a hard
+    # gate is the one-line change of $decisionMode below (check-decisions.js already accepts --mode=fail).
+    $decisionMode = 'warn'
+    $decisionTool = Join-Path $Paths.Repo 'tools\verify\check-decisions.js'
+    if (-not (Test-Path -LiteralPath $decisionTool)) {
+        $checks += New-AdmitCheck 'DECISION' 'warn' 'DECISION_SKIPPED' 'decision gate skipped: check-decisions.js not found' @()
+    } else {
+        $decCode = 0
+        $decText = ''
+        $prevEap = $ErrorActionPreference
+        # The tool reports violations on stdout; capture text + exit code without letting a native command throw
+        $ErrorActionPreference = 'Continue'
+        try {
+            $decText = (& node $decisionTool $Paths.FlowFile ("--mode=" + $decisionMode) 2>&1 | Out-String)
+            $decCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+        $decLines = @($decText.Trim() -split "`r?`n" | Where-Object { $_.Trim() })
+        if ($decLines.Count -eq 0) { $decLines = @("exit=$decCode") }
+        # Report lines look like "[check-decisions] CODE detail"; the summary lines use skip:/warn:/passed
+        $decViolations = @($decLines | Where-Object { $_ -match '^\[check-decisions\] [A-Z][A-Z0-9_]* ' })
+        if ($decCode -eq 2) {
+            $checks += New-AdmitCheck 'DECISION' 'fail' 'DECISION_ERROR' 'decision gate could not read the flow' $decLines
+        } elseif ($decText -match '\[check-decisions\] skip:') {
+            $checks += New-AdmitCheck 'DECISION' 'warn' 'DECISION_SKIPPED' 'no decision ledger in this repository; the gate skipped' @()
+        } elseif ($decText -match '\[check-decisions\] warn:') {
+            if ($decViolations.Count -eq 0) { $decViolations = $decLines }
+            $checks += New-AdmitCheck 'DECISION' 'warn' 'DECISION_PENDING' 'the flow has decision-gate violations; mode=warn does not block yet' $decViolations
+        } elseif ($decText -match '\[check-decisions\] passed') {
+            $checks += New-AdmitCheck 'DECISION' 'pass' 'OK' 'every risk node is covered by a recorded decision' @()
+        } else {
+            # Unexpected output/exit (the tool crashed): fail closed instead of silently ignoring the gate
+            $checks += New-AdmitCheck 'DECISION' 'fail' 'DECISION_ERROR' "decision gate returned exit $decCode without a recognised report" $decLines
+        }
+    }
 
     return $checks
 }

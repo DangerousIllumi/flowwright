@@ -51,10 +51,10 @@ Then walk through `docs/nl-to-flow-guide.md`: requirement → `flow.json` → ge
 
 ## Index
 
-- [AGENTS.md](AGENTS.md): the operating manual for AI assistants (environment setup, repository map, six-step workflow, troubleshooting)
+- [AGENTS.md](AGENTS.md): the operating manual for AI assistants (environment setup, repository map, seven-step workflow, troubleshooting)
 - [README.md](README.md): positioning, capability boundaries, tool directories, error-by-error guide
 - [docs/nl-to-flow-guide.md](docs/nl-to-flow-guide.md): a complete walkthrough from one sentence to `flow.json` and the four checks
-- [docs/admission-gate.md](docs/admission-gate.md): the 16 admission checks, policy, fingerprints and the public boundary
+- [docs/admission-gate.md](docs/admission-gate.md): the 17 admission checks, policy, fingerprints and the public boundary
 - [docs/doc-language.md](docs/doc-language.md): which document uses which language, and the two hard rules
 - [docs/agent-prompts.md](docs/agent-prompts.md): `flow.json` field conventions
 - [docs/script-standards.md](docs/script-standards.md): script standards
