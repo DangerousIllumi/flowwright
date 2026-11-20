@@ -45,6 +45,12 @@ catch a malformed setup, and it keeps a deleted ledger from silently turning the
 without `business/` and with no citation, the check skips (reported as a `DECISION_SKIPPED` warn) and never
 invents a violation.
 
+**Prerequisite before flipping to fail**: run `node tools\verify\check-decisions.js --ledger-only` on the
+machine that holds `business/` and paste its output. That mode reads no flow and validates every ledger row
+(`scope` domain, `class`, `decided_by`, duplicate or unreadable ids), so one dirty historical row cannot fail
+every business flow at once when the mode flips. It exits `1` on any violation and is strict regardless of
+`--mode`; only flip the per-flow gate after it prints `ledger-only passed`.
+
 > The `decisions` array in `flow.json` is a list of `{ "node": "<node-id>", "decision_id": "D-00X", "note": "..." }`
 > entries; one risk node may carry several entries, and one decision may cover several nodes (one entry per
 > node, all pointing at the same `decision_id`). `decisions[].node` is what binds a decision to a node;

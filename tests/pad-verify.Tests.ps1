@@ -33,9 +33,16 @@ Describe 'pad-verify no longer defaults to a concrete business flow' {
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match 'E_FLOW_FILE_REQUIRED'
         $out | Should Match '-FlowFile'
-        # The acceptance-check stage must not be reached (only the success path prints the summary line and checks field)
-        $out | Should Not Match 'VERIFY_SUMMARY'
-        $out | Should Not Match '"checks"'
+        # The acceptance-check stage must not be reached. Asserting the absence of its markers (VERIFY_SUMMARY,
+        # the "checks" field) was vacuous: this sandbox never contains a runnable flow+criteria pair, so the
+        # early-error guard can be broken (e.g. a candidate is defaulted/picked) without those markers ever being
+        # printed. Pin the exact early-error output instead: one result line, carrying exactly ok+error.
+        $lines = @($out.Trim() -split "`r?`n")
+        $lines.Count | Should Be 1
+        $r = [regex]::Match($out, 'PAD_VERIFY_RESULT=(\{.*\})').Groups[1].Value | ConvertFrom-Json
+        $r.ok | Should Be $false
+        $r.error | Should Match '^E_FLOW_FILE_REQUIRED'
+        (@($r.PSObject.Properties.Name) -join ',') | Should Be 'ok,error'
     }
 
     It 'multiple flow candidates: non-zero exit reporting the candidate count' {
@@ -50,6 +57,13 @@ Describe 'pad-verify no longer defaults to a concrete business flow' {
         $out | Should Match 'E_FLOW_AMBIGUOUS'
         $out | Should Match 'candidates=2'
         $out | Should Match '-FlowFile'
-        $out | Should Not Match 'VERIFY_SUMMARY'
+        # Same vacuous shape as the empty-flows case: only the result line may be printed, and the early error
+        # must stay the ambiguous-candidates error (a silently picked candidate would reach a different path).
+        $lines = @($out.Trim() -split "`r?`n")
+        $lines.Count | Should Be 1
+        $r = [regex]::Match($out, 'PAD_VERIFY_RESULT=(\{.*\})').Groups[1].Value | ConvertFrom-Json
+        $r.ok | Should Be $false
+        $r.error | Should Match '^E_FLOW_AMBIGUOUS\(candidates=2\)'
+        (@($r.PSObject.Properties.Name) -join ',') | Should Be 'ok,error'
     }
 }

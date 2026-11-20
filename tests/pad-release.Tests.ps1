@@ -222,8 +222,11 @@ Describe 'pad-release no longer defaults to a concrete business flow' {
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match 'E_SOURCE_ROBIN_REQUIRED'
         $out | Should Match '-SourceRobin'
-        # It must fail before running tests or publishing (it must never reach the execution stage)
-        $out | Should Not Match 'pytestPassed'
+        # It must fail before running tests or publishing (it must never reach the execution stage).
+        # Asserting that the JSON lacks "pytestPassed" was vacuous: this invocation passes -SkipTests, so the
+        # only code that can populate it (Get-TestSummary) is never called even if the tests stage were reached.
+        # Assert the observable consequence instead: the test summary was never even initialised.
+        $out | Should Match '"tests":null'
         $out | Should Not Match '"stage":"done"'
     }
 }

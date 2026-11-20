@@ -422,7 +422,11 @@ Describe 'pad-admit no longer defaults to a concrete business flow' {
         # "not total:14" passed without proving anything.
         ([regex]::Matches($text, '"id":"')).Count | Should Be 1
         $text | Should Match '"id":"ADMIT"'
-        $text | Should Not Match 'POLICY_'
+        # Asserting that POLICY_ never appears was vacuous: the policy check (the only producer of POLICY_* codes)
+        # runs only after the flow has been read, which this flow name makes impossible, so the forbidden string
+        # could never appear even if the guard that aborts here were broken. Pin the report's actual terminal
+        # state instead: exactly one check, counted as the single failure.
+        $text | Should Match '"summary":\{"total":1,"pass":0,"warn":0,"ask":0,"fail":1\}'
     }
 }
 

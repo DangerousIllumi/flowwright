@@ -83,8 +83,15 @@ Describe 'pad_flow_name is accepted but not consumed by the generation chain' {
             $genExit | Should Be 0
             $chkExit | Should Be 0
             $text = [IO.File]::ReadAllText($robin, [Text.Encoding]::UTF8)
-            $text | Should Not Match 'pad_flow_name'
-            $text | Should Not Match '示例显示名-XYZ'
+            # The field must be accepted but not consumed: generating the same flow with and without
+            # pad_flow_name must produce a byte-identical .robin. Asserting that the literal key/value is
+            # absent was vacuous: the generator emits PAD statements only, so no JSON field name and no
+            # unconsumed top-level value can ever reach the .robin, whatever the code does.
+            $plainRobin = Join-Path $TestDrive 'without-display.robin'
+            & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') $src $plainRobin 2>$null | Out-Null
+            $LASTEXITCODE | Should Be 0
+            $plainText = [IO.File]::ReadAllText($plainRobin, [Text.Encoding]::UTF8)
+            ([string]::Equals($text, $plainText, [StringComparison]::Ordinal)) | Should Be $true
         } finally {
             $ErrorActionPreference = $prevEap
         }

@@ -4,13 +4,20 @@
  *
  * Usage:
  *   node check-decisions.js <flow.json> [--ledger <path>] [--repo <path>] [--mode=warn|fail]
+ *   node check-decisions.js --ledger-only [--ledger <path>] [--repo <path>]
+ *
+ * --ledger-only validates the shared ledger's schema and nothing else: no flow is read, every row is
+ * checked (scope domain, class, decided_by, duplicate/unreadable ids) and it exits 1 on any violation.
+ * It is the prerequisite for flipping the flow gate to fail: one dirty historical row would otherwise
+ * fail every business flow at once. This mode is strict regardless of --mode, because it judges the
+ * ledger itself rather than the two-phase migration of the flows.
  *
  * Two-phase rollout (do not leave it in warn forever):
  *   --mode=warn (default) prints every violation and exits 0, so the gate can be introduced before the
  *   business layer is complete; --mode=fail exits 1. Flip the default of this file and the --mode of the
  *   callers (flow-to-robin.js, pad-admit.ps1) in one change once every flow under business/flows/ declares
- *   its decisions and every ledger record carries a class. CI already runs this in fail mode, because a
- *   public sample never cites a decision: there fail mode can only catch a malformed setup.
+ *   its decisions, every ledger record carries a class, and --ledger-only is clean. CI already runs this in
+ *   fail mode, because a public sample never cites a decision: there fail mode can only catch a broken setup.
  *
  * What it checks (all of it derived from flow.json + business/decisions.jsonl; nothing is inferred):
  *   1. every risk node (reversible=false or intent_destructive=true) is covered by a decisions entry, and
@@ -32,8 +39,8 @@
  * disable the gate (the same shape as the output-root registry's REGISTRY_MISSING mistake).
  *
  * Output is pure ASCII: any non-ASCII character is reported as \uXXXX so the codes stay greppable.
- * Exit codes: 0 = pass, skip, or violations while mode=warn; 1 = violations while mode=fail;
- *             2 = usage error or unreadable flow.
+ * Exit codes: 0 = pass, skip, or violations while mode=warn; 1 = violations while mode=fail (and any
+ *             violation in --ledger-only); 2 = usage error or unreadable flow.
  */
 const fs = require("fs");
 const path = require("path");
@@ -55,20 +62,26 @@ function toAscii(value) {
 
 function usage() {
   console.error("Usage: node check-decisions.js <flow.json> [--ledger <path>] [--repo <path>] [--mode=warn|fail]");
+  console.error("       node check-decisions.js --ledger-only [--ledger <path>] [--repo <path>]");
 }
 
 function parseArgs(argv) {
-  const out = { flow: null, ledger: null, repo: path.resolve(__dirname, "..", ".."), mode: "warn" };
+  const out = { flow: null, ledger: null, repo: path.resolve(__dirname, "..", ".."), mode: "warn", ledgerOnly: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--ledger") { out.ledger = argv[i + 1]; i += 1; continue; }
     if (a === "--repo") { out.repo = argv[i + 1]; i += 1; continue; }
+    if (a === "--ledger-only") { out.ledgerOnly = true; continue; }
     if (a.startsWith("--mode=")) { out.mode = a.slice("--mode=".length); continue; }
     if (a.startsWith("--")) throw new Error(`unknown option ${a}`);
     if (out.flow) throw new Error(`unexpected argument ${a}`);
     out.flow = a;
   }
-  if (!out.flow) throw new Error("no flow file given");
+  if (out.ledgerOnly) {
+    if (out.flow) throw new Error("--ledger-only takes no flow file; run the per-flow gate without it");
+  } else if (!out.flow) {
+    throw new Error("no flow file given (use --ledger-only to validate the ledger alone)");
+  }
   if (!MODES.includes(out.mode)) throw new Error(`--mode must be one of ${MODES.join("|")}, got ${out.mode}`);
   if (out.repo == null) throw new Error("--repo needs a path");
   if (out.ledger === undefined) out.ledger = null;
@@ -102,7 +115,48 @@ function isValidScope(scope) {
 }
 
 /**
- * Pure check: returns { violations: [{code, detail}], stats, skip }.
+ * Read the ledger and validate the row schema (id / scope / class / decided_by). Schema is validated for
+ * every row because the ledger is shared: a malformed historical row is a defect even when no flow cites it.
+ * Person approval is NOT checked here - that is a per-citation rule and lives in checkDecisions.
+ */
+function loadLedger(ledgerPath, ledgerLabel, add) {
+  const rows = [];
+  const byId = new Map();
+  const available = fs.existsSync(ledgerPath);
+  if (!available) return { rows, byId, available };
+  const lines = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch (e) {
+      add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} line=${i + 1} error=${e.message}`);
+      continue;
+    }
+    if (!rec || typeof rec !== "object" || Array.isArray(rec) || typeof rec.id !== "string" || !rec.id) {
+      add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} line=${i + 1} must be a JSON object with a string id`);
+      continue;
+    }
+    rows.push(rec);
+    if (byId.has(rec.id)) add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} duplicate id=${rec.id} at line=${i + 1}; the ledger must not repeat an id`);
+    else byId.set(rec.id, rec);
+    if (!isValidScope(rec.scope)) {
+      add("DECISION_SCOPE_INVALID", `decision=${rec.id} scope=${JSON.stringify(rec.scope)} expected global | flow:<name> | script:<repo-relative path>`);
+    }
+    if (!CLASSES.includes(rec.class)) {
+      add("DECISION_CLASS_INVALID", `decision=${rec.id} class=${JSON.stringify(rec.class)} expected one of ${CLASSES.join("|")}`);
+    }
+    if (!DECIDED_BY.includes(rec.decided_by)) {
+      add("DECISION_DECIDED_BY_INVALID", `decision=${rec.id} decided_by=${JSON.stringify(rec.decided_by)} expected one of ${DECIDED_BY.map((v) => JSON.stringify(v)).join("|")}`);
+    }
+  }
+  return { rows, byId, available };
+}
+
+/**
+ * Pure check of one flow: returns { violations: [{code, detail}], stats, skip }.
  * Reads both files itself so the CLI and any caller judge with exactly one implementation.
  */
 function checkDecisions(flowFile, options = {}) {
@@ -134,45 +188,12 @@ function checkDecisions(flowFile, options = {}) {
     return { skip: true, detail: "business layer not present in this repository", violations: [], stats: {} };
   }
 
-  const ledger = [];
-  const byId = new Map();
-  const ledgerAvailable = fs.existsSync(ledgerPath);
+  const { rows, byId, available: ledgerAvailable } = loadLedger(ledgerPath, ledgerLabel, add);
   if (!ledgerAvailable) {
     const why = businessPresent
       ? "the business layer exists, so the ledger must exist too"
       : `the flow cites ${cited} decision(s) and a reference that cannot be checked is not a pass`;
     add("LEDGER_MISSING", `ledger=${ledgerLabel} is missing (${why})`);
-  } else {
-    const lines = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/);
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      let rec;
-      try {
-        rec = JSON.parse(line);
-      } catch (e) {
-        add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} line=${i + 1} error=${e.message}`);
-        continue;
-      }
-      if (!rec || typeof rec !== "object" || Array.isArray(rec) || typeof rec.id !== "string" || !rec.id) {
-        add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} line=${i + 1} must be a JSON object with a string id`);
-        continue;
-      }
-      ledger.push(rec);
-      if (byId.has(rec.id)) add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} duplicate id=${rec.id} at line=${i + 1}; the ledger must not repeat an id`);
-      else byId.set(rec.id, rec);
-      // Ledger schema, checked on every row rather than only on the rows this flow happens to cite: a
-      // malformed row is a defect of the shared ledger, not of one citation.
-      if (!isValidScope(rec.scope)) {
-        add("DECISION_SCOPE_INVALID", `decision=${rec.id} scope=${JSON.stringify(rec.scope)} expected global | flow:<name> | script:<repo-relative path>`);
-      }
-      if (!CLASSES.includes(rec.class)) {
-        add("DECISION_CLASS_INVALID", `decision=${rec.id} class=${JSON.stringify(rec.class)} expected one of ${CLASSES.join("|")}`);
-      }
-      if (!DECIDED_BY.includes(rec.decided_by)) {
-        add("DECISION_DECIDED_BY_INVALID", `decision=${rec.id} decided_by=${JSON.stringify(rec.decided_by)} expected one of ${DECIDED_BY.map((v) => JSON.stringify(v)).join("|")}`);
-      }
-    }
   }
 
   const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
@@ -238,8 +259,26 @@ function checkDecisions(flowFile, options = {}) {
     flow: flowLabel,
     mode,
     violations,
-    stats: { records: ledger.length, decisions: cited, riskNodes: riskNodes.length },
+    stats: { records: rows.length, decisions: cited, riskNodes: riskNodes.length },
   };
+}
+
+/**
+ * Pure check of the ledger alone (no flow): schema violations only. Strict by design - this is the
+ * prerequisite for flipping the per-flow gate to fail, so it must be able to exit non-zero.
+ */
+function checkLedgerOnly(options = {}) {
+  const repo = options.repo || path.resolve(__dirname, "..", "..");
+  const businessDir = path.join(repo, "business");
+  const ledgerPath = options.ledger != null ? path.resolve(options.ledger) : path.join(businessDir, "decisions.jsonl");
+  const ledgerLabel = repoRelative(ledgerPath, repo);
+  const violations = [];
+  const add = (code, detail) => violations.push({ code, detail });
+  const { rows, available } = loadLedger(ledgerPath, ledgerLabel, add);
+  if (!available) {
+    add("LEDGER_MISSING", `ledger=${ledgerLabel} is missing (this mode validates the ledger, so it must exist)`);
+  }
+  return { ledger: ledgerLabel, violations, stats: { records: rows.length } };
 }
 
 function main() {
@@ -250,6 +289,18 @@ function main() {
     console.error(`[check-decisions] ${e.message}`);
     usage();
     process.exit(2);
+  }
+
+  if (args.ledgerOnly) {
+    const result = checkLedgerOnly({ repo: args.repo, ledger: args.ledger });
+    for (const v of result.violations) console.log(`[check-decisions] ${v.code} ${toAscii(v.detail)}`);
+    const summary = `ledger=${result.ledger} records=${result.stats.records}`;
+    if (result.violations.length === 0) {
+      console.log(`[check-decisions] ledger-only passed (${summary})`);
+      process.exit(0);
+    }
+    console.log(`[check-decisions] ledger-only failed: ${result.violations.length} violation(s) (${summary}); fix the ledger before flipping the flow gate to fail`);
+    process.exit(1);
   }
 
   const result = checkDecisions(args.flow, { repo: args.repo, ledger: args.ledger, mode: args.mode });
@@ -279,4 +330,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { checkDecisions, toAscii, isValidScope };
+module.exports = { checkDecisions, checkLedgerOnly, toAscii, isValidScope };

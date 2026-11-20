@@ -36,8 +36,11 @@ function ledgerText(records) {
  * Build a throwaway repo, write the flow (and the ledger unless it is left out), run the CLI, and assert the
  * report is printable ASCII. `business: false` leaves business/ out entirely (the public-tree skip case);
  * a `business` dir with no `ledger` option means the ledger file is missing (the LEDGER_MISSING case).
+ * `opts.assertAscii === false` leaves the printable-ASCII check to the caller: a test that asserts the
+ * escaping on the raw output itself cannot use a helper whose guard runs first, or its own assertion
+ * would be unable to fail.
  */
-function runCheck(options) {
+function runCheck(options, opts = {}) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "check-decisions-"));
   fs.mkdirSync(path.join(repo, "flows"), { recursive: true });
   const flowPath = path.join(repo, "flows", "x.json");
@@ -51,7 +54,9 @@ function runCheck(options) {
   const mode = options.mode || "warn";
   const r = spawnSync(process.execPath, [CLI, flowPath, "--repo", repo, "--mode=" + mode], { encoding: "utf8" });
   const stdout = r.stdout || "";
-  assert.match(stdout, PRINTABLE_ASCII, "stdout must be printable ASCII, got: " + JSON.stringify(stdout));
+  if (opts.assertAscii !== false) {
+    assert.match(stdout, PRINTABLE_ASCII, "stdout must be printable ASCII, got: " + JSON.stringify(stdout));
+  }
   return { status: r.status, stdout, stderr: r.stderr || "" };
 }
 
@@ -292,17 +297,20 @@ test("warn mode exits 0 with a warn summary; fail mode exits 1 on the same input
 
 test("ASCII: a non-ASCII scope and decision id are reported as \\uXXXX", () => {
   // The flow carries a Chinese note and the ledger a Chinese scope; neither may reach the report raw.
+  // The helper's printable-ASCII guard is skipped for these two runs: it runs before the run returns, so with
+  // it on the raw-character check below could never be the assertion that fails.
   const scope = runCheck({
     flow: {
       nodes: [{ id: "15", reversible: true }],
       decisions: [{ node: "15", decision_id: "D-001", note: "\u53d6\u6570\u8303\u56f4\u5df2\u5ba1\u6279" }],
     },
     ledger: ledgerText([record({ scope: "\u4e1a\u52a1/other.json" })]),
-  });
+  }, { assertAscii: false });
   assert.strictEqual(scope.status, 0, scope.stderr);
+  assert.ok(!/[\u0080-\uFFFF]/.test(scope.stdout), "no raw non-ASCII character in stdout");
   assert.match(scope.stdout, /DECISION_SCOPE_INVALID/);
   assert.match(scope.stdout, /scope="\\u4E1A\\u52A1\/other\.json"/);
-  assert.ok(!/[\u0080-\uFFFF]/.test(scope.stdout), "no raw non-ASCII character in stdout");
+  assert.match(scope.stdout, PRINTABLE_ASCII, "stdout must be printable ASCII");
 
   const decisionId = runCheck({
     flow: {
@@ -310,8 +318,9 @@ test("ASCII: a non-ASCII scope and decision id are reported as \\uXXXX", () => {
       decisions: [{ node: "15", decision_id: "\u51b3\u7b56-1" }],
     },
     ledger: ledgerText([record({})]),
-  });
+  }, { assertAscii: false });
   assert.strictEqual(decisionId.status, 0, decisionId.stderr);
-  assert.match(decisionId.stdout, /DECISION_NOT_IN_LEDGER .*decision=\\u51B3\\u7B56-1 not found/);
   assert.ok(!/[\u0080-\uFFFF]/.test(decisionId.stdout), "no raw non-ASCII character in stdout");
+  assert.match(decisionId.stdout, /DECISION_NOT_IN_LEDGER .*decision=\\u51B3\\u7B56-1 not found/);
+  assert.match(decisionId.stdout, PRINTABLE_ASCII, "stdout must be printable ASCII");
 });
