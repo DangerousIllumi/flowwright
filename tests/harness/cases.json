@@ -1,6 +1,10 @@
 {
   "entry": "tests/harness/entry/mini-entry.js",
   "implemented": [
-    "input/missing-input-file"
+    "input/missing-input-file",
+    "env/output-directory-missing",
+    "output/empty-file",
+    "data/duplicate-key",
+    "auth/expired-session"
   ]
 }

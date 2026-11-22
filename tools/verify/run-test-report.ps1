@@ -5,7 +5,9 @@
     Runs the acceptance check and the adversarial harness for one run, then writes
     <WorkRoot>\logs\<flow>\test-report-<runId>.json once and never overwrites it.
 
-      acceptance  -> build-acceptance.ps1 + pad-verify.ps1, bound to -Since
+      acceptance  -> build-acceptance.ps1 + pad-verify.ps1, bound to -Since; only checks that actually ran
+                     enter acceptance[], an optional check that was skipped goes to skipped[] and is never
+                     recorded as pass (a pass is an assertion, a skipped check asserted nothing)
       adversarial -> tests\harness\, one case at a time; cases not implemented yet are recorded as "gap"
       verdict     -> derived from the evidence above, never taken as an input
 
@@ -124,6 +126,7 @@ try {
     }
 
     $acceptance = New-Object System.Collections.ArrayList
+    $skippedChecks = New-Object System.Collections.ArrayList
     for ($i = 0; $i -lt $specChecks.Count; $i++) {
         $c = $specChecks[$i]
         $r = $checkResults[$i]
@@ -134,12 +137,24 @@ try {
         if ($id -notmatch '^[a-z][a-z0-9-]{0,63}$') {
             Stop-Env 'REPORT_ACCEPTANCE_ID_NOT_ASCII' ("acceptance id is not a lowercase ASCII id: {0} (check: {1})" -f $id, [string]$c.name)
         }
+        # A skipped optional check asserted nothing, so it is not an acceptance item: it is reported separately.
+        if ([bool]$r.skipped) {
+            [void]$skippedChecks.Add([ordered]@{
+                id     = $id
+                type   = [string]$c.type
+                reason = [string]$r.detail
+            })
+            continue
+        }
         [void]$acceptance.Add([ordered]@{
             id       = $id
             name     = [string]$c.name
             result   = $(if ($r.ok) { 'pass' } else { 'fail' })
             evidence = ('{0}: {1}' -f [string]$c.type, [string]$r.detail)
         })
+    }
+    if ($acceptance.Count -eq 0) {
+        Stop-Env 'REPORT_INCOMPLETE_NO_EXECUTED_ACCEPTANCE' ('all {0} acceptance check(s) were skipped; a report of only skipped checks asserts nothing' -f $specChecks.Count)
     }
 
     # ---- adversarial: enumerate every case, run the implemented ones, record the rest as gaps ----
@@ -224,11 +239,13 @@ try {
         generated_at      = (Get-Date).ToString('o')
         verdict           = $verdict
         acceptance        = @($acceptance)
+        skipped           = @($skippedChecks)
         adversarial       = @($adversarial)
         known_limitations = @($limitations)
         notes             = [ordered]@{
             acceptance_exit_code = $verifyCode
             acceptance_ok        = [bool]$verify.ok
+            acceptance_skipped   = $skippedChecks.Count
             adversarial_bugs     = $bugs
             adversarial_gaps     = $gaps
         }
@@ -241,8 +258,8 @@ try {
         $stream.Write($bytes, 0, $bytes.Length)
     } finally { $stream.Dispose() }
 
-    Write-Output ("[run-test-report] flow={0} runId={1} verdict={2} acceptance={3} adversarial={4} gaps={5} bugs={6}" -f
-        $FlowName, $RunId, $verdict, $acceptance.Count, $adversarial.Count, $gaps, $bugs)
+    Write-Output ("[run-test-report] flow={0} runId={1} verdict={2} acceptance={3} skipped={4} adversarial={5} gaps={6} bugs={7}" -f
+        $FlowName, $RunId, $verdict, $acceptance.Count, $skippedChecks.Count, $adversarial.Count, $gaps, $bugs)
     Write-Output ("[run-test-report] report={0}" -f (ConvertTo-AsciiEscape $reportPath))
     if ($Json) { Write-Output ("TEST_REPORT_JSON=" + (ConvertTo-AsciiEscape $reportJson)) }
     if ($verdict -eq 'pass') { exit 0 } else { exit 1 }

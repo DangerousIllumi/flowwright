@@ -121,54 +121,54 @@ function main() {
   const expected = record.expected || {};
 
   fs.mkdirSync(sandbox, { recursive: true });
-  const prep = prepare(sandbox, o.case);
-  if (!prep) {
-    process.stdout.write('HARNESS_CASE_ERROR no fault-injection strategy for case: ' + o.case + '\n');
+  try {
+    const prep = prepare(sandbox, o.case);
+    if (!prep) {
+      process.stdout.write('HARNESS_CASE_ERROR no fault-injection strategy for case: ' + o.case + '\n');
+      return 2;
+    }
+
+    const resultFile = path.join(sandbox, 'result.txt');
+    const before = listFiles(prep.outDir);
+    const argv = [entry, ...prep.args, '--out-dir', prep.outDir, '--result-file', resultFile];
+    const res = spawnSync(process.execPath, argv, { encoding: 'utf8' });
+    const after = listFiles(prep.outDir);
+    const added = after.filter((f) => !before.includes(f));
+
+    if (res.error || res.status === null) {
+      process.stdout.write('HARNESS_CASE_ERROR entry did not run: ' + (res.error ? res.error.message : 'terminated by signal') + '\n');
+      return 2;
+    }
+
+    const exitCode = res.status;
+    const status = readStatus(resultFile, exitCode);
+    const reasons = [];
+    if (Object.prototype.hasOwnProperty.call(expected, 'exit_code')) {
+      if (exitCode !== Number(expected.exit_code)) reasons.push('exit_code expected ' + expected.exit_code + ' got ' + exitCode);
+    }
+    if (Object.prototype.hasOwnProperty.call(expected, 'status')) {
+      if (status !== expected.status) reasons.push('status expected ' + expected.status + ' got ' + status);
+    }
+    if (!Object.prototype.hasOwnProperty.call(expected, 'exit_code') && !Object.prototype.hasOwnProperty.call(expected, 'status')) {
+      reasons.push('case declares no expectation');
+    }
+    if (Number(expected.exit_code) === 2 && added.length > 0) {
+      reasons.push('preflight failure produced ' + added.length + ' new product(s): ' + added.join(','));
+    }
+
+    const payload = {
+      case: o.case,
+      subject: 'tests/harness/entry/mini-entry.js',
+      ok: reasons.length === 0,
+      expected,
+      observed: { exit_code: exitCode, status, new_products: added.length, added },
+      detail: reasons.join('; '),
+    };
+    process.stdout.write('HARNESS_CASE_RESULT=' + asciiJson(payload) + '\n');
+    return 0;
+  } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
-    return 2;
   }
-
-  const resultFile = path.join(sandbox, 'result.txt');
-  const before = listFiles(prep.outDir);
-  const argv = [entry, ...prep.args, '--out-dir', prep.outDir, '--result-file', resultFile];
-  const res = spawnSync(process.execPath, argv, { encoding: 'utf8' });
-  const after = listFiles(prep.outDir);
-  const added = after.filter((f) => !before.includes(f));
-
-  if (res.error || res.status === null) {
-    process.stdout.write('HARNESS_CASE_ERROR entry did not run: ' + (res.error ? res.error.message : 'terminated by signal') + '\n');
-    fs.rmSync(sandbox, { recursive: true, force: true });
-    return 2;
-  }
-
-  const exitCode = res.status;
-  const status = readStatus(resultFile, exitCode);
-  const reasons = [];
-  if (Object.prototype.hasOwnProperty.call(expected, 'exit_code')) {
-    if (exitCode !== Number(expected.exit_code)) reasons.push('exit_code expected ' + expected.exit_code + ' got ' + exitCode);
-  }
-  if (Object.prototype.hasOwnProperty.call(expected, 'status')) {
-    if (status !== expected.status) reasons.push('status expected ' + expected.status + ' got ' + status);
-  }
-  if (!Object.prototype.hasOwnProperty.call(expected, 'exit_code') && !Object.prototype.hasOwnProperty.call(expected, 'status')) {
-    reasons.push('case declares no expectation');
-  }
-  if (Number(expected.exit_code) === 2 && added.length > 0) {
-    reasons.push('preflight failure produced ' + added.length + ' new product(s): ' + added.join(','));
-  }
-
-  const payload = {
-    case: o.case,
-    subject: 'tests/harness/entry/mini-entry.js',
-    ok: reasons.length === 0,
-    expected,
-    observed: { exit_code: exitCode, status, new_products: added.length, added },
-    detail: reasons.join('; '),
-  };
-  process.stdout.write('HARNESS_CASE_RESULT=' + asciiJson(payload) + '\n');
-
-  fs.rmSync(sandbox, { recursive: true, force: true });
-  return 0;
 }
 
 process.exit(main());
