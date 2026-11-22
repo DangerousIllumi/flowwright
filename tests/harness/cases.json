@@ -1,0 +1,6 @@
+{
+  "entry": "tests/harness/entry/mini-entry.js",
+  "implemented": [
+    "input/missing-input-file"
+  ]
+}
