@@ -13,11 +13,12 @@
  * ledger itself rather than the two-phase migration of the flows.
  *
  * Two-phase rollout (do not leave it in warn forever):
- *   --mode=warn (default) prints every violation and exits 0, so the gate can be introduced before the
- *   business layer is complete; --mode=fail exits 1. Flip the default of this file and the --mode of the
- *   callers (flow-to-robin.js, pad-admit.ps1) in one change once every flow under business/flows/ declares
- *   its decisions, every ledger record carries a class, and --ledger-only is clean. CI already runs this in
- *   fail mode, because a public sample never cites a decision: there fail mode can only catch a broken setup.
+ *   --mode=warn (default) prints every violation and exits 0; --mode=fail exits 1. The default is now
+ *   "fail": the business layer declares every risk node, the ledger carries a class on every row, and
+ *   `node tools/verify/check-decisions.js --ledger-only` reports "ledger-only passed". Flipping the mode back
+ *   to warn would be a loosening of the gate, so the callers below use "fail" as well.
+ *   The callers (flow-to-robin.js, pad-admit.ps1) pass --mode explicitly; CI runs this in fail mode, because
+ *   a public sample never cites a decision: there fail mode can only catch a broken setup.
  *
  * What it checks (all of it derived from flow.json + business/decisions.jsonl; nothing is inferred):
  *   1. every risk node (reversible=false or intent_destructive=true) is covered by a decisions entry, and
@@ -66,7 +67,7 @@ function usage() {
 }
 
 function parseArgs(argv) {
-  const out = { flow: null, ledger: null, repo: path.resolve(__dirname, "..", ".."), mode: "warn", ledgerOnly: false };
+  const out = { flow: null, ledger: null, repo: path.resolve(__dirname, "..", ".."), mode: "fail", ledgerOnly: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--ledger") { out.ledger = argv[i + 1]; i += 1; continue; }
@@ -122,8 +123,12 @@ function isValidScope(scope) {
 function loadLedger(ledgerPath, ledgerLabel, add) {
   const rows = [];
   const byId = new Map();
+  const supersededIds = new Set();
+  // Supersede targets are resolved after the whole file is read: the target may appear later in the
+  // ledger (a hand-inserted row, or a file that was re-sorted), and that order is not a defect.
+  const pendingSupersedes = [];
   const available = fs.existsSync(ledgerPath);
-  if (!available) return { rows, byId, available };
+  if (!available) return { rows, byId, supersededIds, available };
   const lines = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i].trim();
@@ -142,6 +147,13 @@ function loadLedger(ledgerPath, ledgerLabel, add) {
     rows.push(rec);
     if (byId.has(rec.id)) add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} duplicate id=${rec.id} at line=${i + 1}; the ledger must not repeat an id`);
     else byId.set(rec.id, rec);
+    // A record that supersedes another revokes that older record: the old row stays for the audit trail,
+    // but it may no longer be cited as an authorisation.
+    if (rec.supersedes) {
+      const old = String(rec.supersedes);
+      supersededIds.add(old);
+      pendingSupersedes.push({ id: rec.id, old, line: i + 1 });
+    }
     if (!isValidScope(rec.scope)) {
       add("DECISION_SCOPE_INVALID", `decision=${rec.id} scope=${JSON.stringify(rec.scope)} expected global | flow:<name> | script:<repo-relative path>`);
     }
@@ -151,8 +163,29 @@ function loadLedger(ledgerPath, ledgerLabel, add) {
     if (!DECIDED_BY.includes(rec.decided_by)) {
       add("DECISION_DECIDED_BY_INVALID", `decision=${rec.id} decided_by=${JSON.stringify(rec.decided_by)} expected one of ${DECIDED_BY.map((v) => JSON.stringify(v)).join("|")}`);
     }
+    if (rec.nodes !== undefined) {
+      // nodes is the optional node list of a batch authorisation. An empty list is not "applies to every
+      // node", it is a malformed record, so it fails instead of being read as a wildcard.
+      if (!Array.isArray(rec.nodes)) {
+        add("DECISION_NODES_INVALID", `decision=${rec.id} nodes must be an array of node ids`);
+      } else if (rec.nodes.length === 0) {
+        add("DECISION_NODES_EMPTY", `decision=${rec.id} nodes is an empty array; an empty list is not "applies to every node", it is a malformed record`);
+      } else {
+        for (const n of rec.nodes) {
+          if (typeof n !== "string" || !n) {
+            add("DECISION_NODES_INVALID", `decision=${rec.id} nodes must contain non-empty node id strings`);
+            break;
+          }
+        }
+      }
+    }
   }
-  return { rows, byId, available };
+  for (const p of pendingSupersedes) {
+    if (!byId.has(p.old)) {
+      add("LEDGER_UNREADABLE", `ledger=${ledgerLabel} line=${p.line} decision=${p.id} supersedes ${p.old}, which is not a record in this ledger`);
+    }
+  }
+  return { rows, byId, supersededIds, available };
 }
 
 /**
@@ -181,14 +214,22 @@ function checkDecisions(flowFile, options = {}) {
   const entries = flow.decisions;
   const cited = Array.isArray(entries) ? entries.length : 0;
 
-  // The public tree has no business layer. A flow that cites nothing has nothing to verify, so the skip is
-  // explicit and reported. A flow that DOES cite decisions must not fall into that branch: "no ledger" must
-  // never be read as "no records to check", or deleting the ledger file silently disables the gate.
-  if (!ledgerGiven && !businessPresent && cited === 0) {
-    return { skip: true, detail: "business layer not present in this repository", violations: [], stats: {} };
+  // Scope: the decision ledger governs the business layer. A public sample (under tests/, tools/ or
+  // examples/) is not a business flow, so it is not judged against the business ledger - and it must
+  // behave the same on the business machine and on the public runner, where business/ does not exist.
+  // A flow that DOES cite decisions is always judged: a citation that cannot be verified must fail
+  // rather than skip, otherwise deleting the ledger would turn the gate off.
+  const businessAbs = path.resolve(businessDir);
+  const flowAbs = path.resolve(flowFile);
+  const underBusiness = flowAbs === businessAbs || flowAbs.startsWith(businessAbs + path.sep);
+  if (!ledgerGiven && cited === 0 && !underBusiness) {
+    const detail = !businessPresent
+      ? "business layer not present in this repository"
+      : "the flow is not part of the business layer, which the decision ledger governs";
+    return { skip: true, detail, violations: [], stats: {} };
   }
 
-  const { rows, byId, available: ledgerAvailable } = loadLedger(ledgerPath, ledgerLabel, add);
+  const { rows, byId, supersededIds, available: ledgerAvailable } = loadLedger(ledgerPath, ledgerLabel, add);
   if (!ledgerAvailable) {
     const why = businessPresent
       ? "the business layer exists, so the ledger must exist too"
@@ -234,8 +275,19 @@ function checkDecisions(flowFile, options = {}) {
           return;
         }
         if (recordsByNode.has(entry.node)) recordsByNode.get(entry.node).push(rec);
+        if (supersededIds.has(entry.decision_id)) {
+          // The record exists but has been revoked by a later row that supersedes it. The old row stays for
+          // the audit trail, but citing it would mean operating on an expired authorisation.
+          add("DECISION_SUPERSEDED", `decision=${entry.decision_id} node=${entry.node} has been superseded by a later ledger row; cite the row that supersedes it instead`);
+        }
         if (rec.class === "risk" && rec.decided_by !== "user") {
           add("DECISION_NOT_USER_APPROVED", `decision=${entry.decision_id} decided_by=${JSON.stringify(rec.decided_by)} a risk-class decision needs a person; record the confirmation as a new row with decided_by=user and supersedes=${entry.decision_id}`);
+        }
+        // A record that lists nodes authorises exactly those nodes. A flow that cites it for a node outside
+        // the list is borrowing a batch approval for something nobody approved - this is the only thing that
+        // stops a newly added node from silently inheriting an old batch confirmation.
+        if (Array.isArray(rec.nodes) && rec.nodes.length > 0 && !rec.nodes.includes(entry.node)) {
+          add("DECISION_NODE_NOT_IN_RECORD", `decision=${entry.decision_id} node=${entry.node} is not in the record's node list (${rec.nodes.join(",")}); cite a decision that covers this node`);
         }
       });
     }

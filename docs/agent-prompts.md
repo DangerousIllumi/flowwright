@@ -91,6 +91,9 @@ Follow this structure strictly:
     { "name": "variable name", "type": "string | number | boolean | list | datatable",
       "default": "default value", "description": "variable description", "required": true }
   ],
+  "decisions": [
+    { "node": "29", "decision_id": "D-006", "note": "why this node needs the decision (optional)" }
+  ],
   "nodes": [
     {
       "id": "1",
@@ -163,6 +166,21 @@ Field notes:
   directories, rows or cells, `false` when it only reads or creates new files. When it is `true`,
   `reversibility_note` is also required, and a known posting intent (`sap-migo`, `posting`) must not be
   declared `false`.
+- **decisions (top level, optional): the decision-ledger reference.** Every node that is irreversible
+  (`reversible=false`) or destructive (`intent_destructive=true`) must be named by one entry, so the gate
+  `tools/verify/check-decisions.js` can tell which recorded decision approved it. One entry per node:
+  `{ "node": "<node-id>", "decision_id": "D-00X", "note": "..." }`; the note is optional. One decision may cover
+  several nodes — write one entry per node, all pointing at the same `decision_id`.
+  The referenced record must exist in `business/decisions.jsonl`, must be `class=risk` with `decided_by=user`,
+  must not have been superseded by a later row, and — when that record lists a `nodes` array — must list this
+  node in it (`DECISION_NODE_NOT_IN_RECORD` otherwise, which is what stops a new node from inheriting an old
+  batch confirmation).
+  **The ledger record's own fields**: `id` / `class` / `scope` / `decision` / `decided_by` / `decided_at` are
+  required, `nodes` / `evidence` / `supersedes` / `spec` are optional. `class` is `risk` or `standard`;
+  `decided_by` is `user` or `agent(recorded)`, and a `class=risk` record must be `user`; `scope` is `global`,
+  `flow:<name>` or `script:<repo-relative path>`.
+  **A record without `nodes` means a single-node citation, not "every node"** — the two are different, and
+  the difference is enforced. An empty `nodes` array is `DECISION_NODES_EMPTY`, not a wildcard.
 **Control-flow nodes** (pad_hint is `IF` / `LOOP` / `SWITCH`; the generator recognizes the node shape and emits
 built-in statements):
 

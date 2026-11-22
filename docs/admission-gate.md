@@ -33,22 +33,31 @@
 | 14 | INTENT | Node `intent` / `tags` | Generic actions such as `RunDOSCommand` and `RunVBScript` must carry a semantic tag that policy can match | `MISSING_INTENT` | `pad-admit.ps1` (a missing intent is fail; policy supports `when.intent`) |
 | 15 | TRIGGER | The `trigger` block in `flow.json` + node reversibility + script destructive declarations | Kind domain, required fields, directory must come from a config reference, unattended runs may not require human confirmation; every node must declare `reversible`, and `RunDOSCommand`/`RunVBScript` must also declare `intent_destructive` | `TRIGGER_*` (see 2.2, 2.2b) + `REVERSIBILITY_UNDECLARED` | `pad-admit.ps1` (an undeclared trigger is warn during the observation period; every node missing `reversible` is ask, and script nodes missing `intent_destructive` are ask) |
 | 16 | INPUT | Node-level `inputs` declaration + `config` | Directory must come from a config reference; `required` declared explicitly; a required file with 0 candidates fails; ≥2 candidates is always ambiguous | `INPUT_*` (see 2.3) | `pad-admit.ps1` (undeclared is warn, for backward compatibility) |
-| 17 | DECISION | `flow.json` + `business/decisions.jsonl` | Every risk node (`reversible=false` or `intent_destructive=true`) is covered by at least one `decisions` entry whose ledger record exists and is `class=risk` with `decided_by=user`; every ledger row keeps `scope` inside the closed domain `global` / `flow:<name>` / `script:<repo-relative path>`, and a cited decision must exist (citing decisions with no ledger to verify them is a failure, never a skip) | `RISK_NODE_WITHOUT_DECISION` / `RISK_NODE_DECISION_NOT_RISK` / `DECISION_NOT_IN_LEDGER` / `DECISION_NOT_USER_APPROVED` / `DECISION_SCOPE_INVALID` / `DECISION_CLASS_INVALID` / `DECISION_DECIDED_BY_INVALID` / `DECISION_ENTRY_INVALID` / `DECISION_NODE_NOT_FOUND` / `LEDGER_MISSING` / `LEDGER_UNREADABLE`; `DECISION_PENDING` / `DECISION_SKIPPED` (warn); `DECISION_ERROR` (fail: unreadable flow or an unrecognised gate report) | `tools/verify/check-decisions.js`, called from `tools/pad-sync/pad-admit.ps1` and `tools/pad-robin/flow-to-robin.js`; two-phase warn -> fail rollout (see below) |
+| 17 | DECISION | `flow.json` + `business/decisions.jsonl` | Every risk node (`reversible=false` or `intent_destructive=true`) is covered by at least one `decisions` entry whose ledger record exists and is `class=risk` with `decided_by=user`; every ledger row keeps `scope` inside the closed domain `global` / `flow:<name>` / `script:<repo-relative path>`, and a cited decision must exist (citing decisions with no ledger to verify them is a failure, never a skip); a cited decision must not have been superseded; a record that lists `nodes` covers exactly those nodes | `RISK_NODE_WITHOUT_DECISION` / `RISK_NODE_DECISION_NOT_RISK` / `DECISION_NOT_IN_LEDGER` / `DECISION_NOT_USER_APPROVED` / `DECISION_SUPERSEDED` / `DECISION_NODE_NOT_IN_RECORD` / `DECISION_NODES_EMPTY` / `DECISION_NODES_INVALID` / `DECISION_SCOPE_INVALID` / `DECISION_CLASS_INVALID` / `DECISION_DECIDED_BY_INVALID` / `DECISION_ENTRY_INVALID` / `DECISION_NODE_NOT_FOUND` / `LEDGER_MISSING` / `LEDGER_UNREADABLE`; `DECISION_PENDING` / `DECISION_SKIPPED` (warn); `DECISION_ERROR` (fail: unreadable flow or an unrecognised gate report) | `tools/verify/check-decisions.js`, called from `tools/pad-sync/pad-admit.ps1` and `tools/pad-robin/flow-to-robin.js`; the mode is now `fail` in all three places (see below) |
 
-**Two-phase rollout for DECISION**: the check ships in `warn` mode first, reports every violation as
-`DECISION_PENDING` (warn) and does not block, so it can be introduced before every business flow declares its
-decisions. It flips to `fail` in one change — the `--mode` of `check-decisions.js` and of the callers
-(the `$decisionMode` variable in `pad-admit.ps1`, `flow-to-robin.js`) — once every flow under
-`business/flows/` declares its decisions and every ledger record carries a `class`. CI is the exception and
-already runs the gate with `--mode=fail`: a public sample never cites a decision, so there fail mode can only
-catch a malformed setup, and it keeps a deleted ledger from silently turning the gate off. On a public tree
-without `business/` and with no citation, the check skips (reported as a `DECISION_SKIPPED` warn) and never
-invents a violation.
+**The DECISION gate is now a hard gate.** The two-phase rollout finished on 2026-11-19: every flow under
+`business/flows/` declares its decisions, every ledger row carries a `class`, and
+`node tools\verify\check-decisions.js --ledger-only` reports `ledger-only passed`. The `--mode` of
+`check-decisions.js` (its default), the `$decisionMode` variable in `pad-admit.ps1` and the
+`DECISION_GATE_MODE` constant in `flow-to-robin.js` are all `fail`; keep the three in step. The `warn` mode
+still exists as a diagnostic switch, not as a way to let a violation through: a caller that passes `--mode=warn`
+sees every violation in the report.
 
-**Prerequisite before flipping to fail**: run `node tools\verify\check-decisions.js --ledger-only` on the
+**Superseded records**: a ledger row may carry `supersedes: "<old-id>"`. The old row stays on file for the
+audit trail, but it is revoked: citing it is `DECISION_SUPERSEDED` (fail) both from a flow's `decisions` array
+and from the output-root registry. A record that supersedes another is not itself superseded, so the
+replacement row can still be cited.
+
+**Batch authorisation**: a ledger row may carry `nodes: ["<node-id>", ...]`. **No `nodes` field means a
+single-node citation, not "every node"** — the two are different things, and the difference is enforced: a
+flow that cites such a record for a node outside the list is `DECISION_NODE_NOT_IN_RECORD` (fail). This is
+what stops a newly added node from silently inheriting an old batch confirmation. An empty `nodes` array is
+`DECISION_NODES_EMPTY` (fail): an empty list is a malformed record, not a wildcard.
+
+**Prerequisite for touching the ledger**: run `node tools\verify\check-decisions.js --ledger-only` on the
 machine that holds `business/` and paste its output. That mode reads no flow and validates every ledger row
-(`scope` domain, `class`, `decided_by`, duplicate or unreadable ids), so one dirty historical row cannot fail
-every business flow at once when the mode flips. It exits `1` on any violation and is strict regardless of
+(`scope` domain, `class`, `decided_by`, `nodes` shape, duplicate or unreadable ids), so one dirty historical
+row cannot fail every business flow at once. It exits `1` on any violation and is strict regardless of
 `--mode`; only flip the per-flow gate after it prints `ledger-only passed`.
 
 > The `decisions` array in `flow.json` is a list of `{ "node": "<node-id>", "decision_id": "D-00X", "note": "..." }`

@@ -15,6 +15,10 @@
       4. an absolute path literal in a business script that is neither under business/, nor under a registered
          root, nor an executable path.
 
+    A fifth condition fails the gate: a registry entry whose decision_id has been superseded
+    (DECISION_SUPERSEDED). The old ledger row stays on file for the audit trail, but citing it means
+    working with a revoked authorisation, which is not an audit concern but an operational one.
+
     MISSING FILES: SKIP OR FAIL
       - business/ absent -> skip, exit 0, unconditionally. business/ is excluded by .gitignore, so a CI
         runner never checks it out; failing there would fail every build for a file that cannot exist.
@@ -117,11 +121,15 @@ $entries = @()
 if ($hasRootsProperty) { $entries = @($registry.roots | Where-Object { $null -ne $_ }) }
 
 $decisionIds = @{}
+$supersededIds = @{}
 if (Test-Path -LiteralPath $ledgerFile) {
     foreach ($line in Get-Content -LiteralPath $ledgerFile -Encoding UTF8) {
         if (-not $line.Trim()) { continue }
         try { $record = $line | ConvertFrom-Json } catch { continue }
         if ($record.id) { $decisionIds[[string]$record.id] = $true }
+        # A record that supersedes another revokes that older record: the old row stays for the audit
+        # trail, but it may no longer be cited as an authorisation.
+        if ($record.supersedes) { $supersededIds[[string]$record.supersedes] = $true }
     }
 } elseif ($entries.Count -gt 0) {
     Write-Output ("[check-output-roots] LEDGER_MISSING business/decisions.jsonl is required to resolve {0} registered root(s)" -f $entries.Count)
@@ -152,6 +160,10 @@ foreach ($entry in $entries) {
         [void]$violations.Add(("ROOT_WITHOUT_DECISION {0}" -f $full))
     } elseif (-not $decisionIds.ContainsKey($decisionId)) {
         [void]$violations.Add(("DECISION_NOT_IN_LEDGER {0} {1}" -f $full, $decisionId))
+    } elseif ($supersededIds.ContainsKey($decisionId)) {
+        # The record exists but has been revoked by a later row that supersedes it. Citing it would mean
+        # operating on an expired authorisation.
+        [void]$violations.Add(("DECISION_SUPERSEDED {0} {1}" -f $full, $decisionId))
     }
     $duplicate = $false
     foreach ($seen in $roots) {

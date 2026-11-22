@@ -1040,9 +1040,10 @@ function Invoke-AdmitChecks {
     $checks += @(Invoke-InputCheck -Flow $Flow -Config $Config -ConfigFile $Paths.ConfigFile)
 
     # 17 DECISION (decision-ledger gate: every risk node must be covered by a recorded decision)
-    # Two-phase rollout: the gate starts in warn mode, so it reports without blocking yet. Flipping it to a hard
-    # gate is the one-line change of $decisionMode below (check-decisions.js already accepts --mode=fail).
-    $decisionMode = 'warn'
+    # The mode is "fail": the business layer declares every risk node, the ledger carries a class on every
+    # row, and `node tools\verify\check-decisions.js --ledger-only` reports "ledger-only passed". Keep the
+    # three places (this variable, check-decisions.js's default, flow-to-robin.js's DECISION_GATE_MODE) in step.
+    $decisionMode = 'fail'
     $decisionTool = Join-Path $Paths.Repo 'tools\verify\check-decisions.js'
     if (-not (Test-Path -LiteralPath $decisionTool)) {
         $checks += New-AdmitCheck 'DECISION' 'warn' 'DECISION_SKIPPED' 'decision gate skipped: check-decisions.js not found' @()

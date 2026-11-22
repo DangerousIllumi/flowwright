@@ -42,8 +42,14 @@ function ledgerText(records) {
  */
 function runCheck(options, opts = {}) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "check-decisions-"));
-  fs.mkdirSync(path.join(repo, "flows"), { recursive: true });
-  const flowPath = path.join(repo, "flows", "x.json");
+  // A flow under business/ is a business flow and is always judged; a flow outside it is a public sample
+  // and is skipped when it cites nothing. Cases that exercise the per-flow rules therefore go under
+  // business/flows/, exactly like a real business flow. `publicSample: true` puts the flow outside instead.
+  const flowDir = options.publicSample || options.business === false
+    ? path.join(repo, "flows")
+    : path.join(repo, "business", "flows");
+  fs.mkdirSync(flowDir, { recursive: true });
+  const flowPath = path.join(flowDir, "x.json");
   fs.writeFileSync(flowPath, JSON.stringify(options.flow, null, 2), "utf8");
   if (options.business !== false) {
     fs.mkdirSync(path.join(repo, "business"), { recursive: true });
@@ -75,7 +81,7 @@ test("pass: a risk node covered by a user-approved global decision exits 0", () 
     ledger: ledgerText([record({ class: "risk", decided_by: "user" })]),
   });
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /passed \(flow=flows\/x\.json decisions=1 risk_nodes=1 ledger_records=1\)/);
+  assert.match(r.stdout, /passed \(flow=business\/flows\/x\.json decisions=1 risk_nodes=1 ledger_records=1\)/);
   assert.doesNotMatch(r.stdout, /violation/);
 });
 

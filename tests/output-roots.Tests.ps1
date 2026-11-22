@@ -48,6 +48,23 @@ function Set-Ledger {
     Write-RepoFile $Root 'business\decisions.jsonl' ($lines -join "`r`n")
 }
 
+function Set-LedgerWithSupersede {
+    param([string]$Root, [string]$OldId, [string]$NewId, [string[]]$AlsoIds)
+    # The old row stays on file (audit trail) and the new row revokes it.
+    # Each element is parenthesised on purpose: in PowerShell the comma operator binds tighter than '+',
+    # so an unparenthesised list of concatenations collapses into ONE string joined by spaces.
+    $lines = @(
+        ('{"id":"' + $OldId + '","scope":"test","decision":"synthetic old record","decided_by":"agent(recorded)","decided_at":"2026-01-01"}'),
+        ('{"id":"' + $NewId + '","scope":"test","decision":"synthetic new record","decided_by":"user","decided_at":"2026-01-02","supersedes":"' + $OldId + '"}')
+    )
+    foreach ($extra in @($AlsoIds)) {
+        if (-not $extra) { continue }
+        $lines += ('{"id":"' + $extra + '","scope":"test","decision":"unrelated record","decided_by":"user","decided_at":"2026-01-03"}')
+    }
+    # Join with a real newline: the ledger is one JSON object per line.
+    [IO.File]::WriteAllText((Join-Path $Root 'business\decisions.jsonl'), ($lines -join [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))
+}
+
 Describe 'Output-root registry gate' {
 
     It 'skips with exit 0 when the business layer is absent (the CI case)' {
@@ -110,6 +127,42 @@ Describe 'Output-root registry gate' {
             $result = Invoke-Gate $root
             $result.Code | Should Be 1
             $result.Text | Should Match 'LEDGER_MISSING'
+        } finally { Remove-TempRepo $root }
+    }
+
+    It 'fails when the registry cites a decision that a later row superseded' {
+        # The old row stays on file for the audit trail, but it is revoked: an output root authorised by it
+        # would be an output root working on a expired authorisation.
+        $root = New-TempRepo
+        try {
+            Set-Registry $root '{"roots":[{"path":"Q:\\qa\\out","decision_id":"D-001"}]}'
+            Set-LedgerWithSupersede $root 'D-001' 'D-011'
+            $result = Invoke-Gate $root
+            $result.Code | Should Be 1
+            $result.Text | Should Match 'DECISION_SUPERSEDED Q:\\qa\\out D-001'
+        } finally { Remove-TempRepo $root }
+    }
+
+    It 'passes when the registry cites the row that supersedes the old one' {
+        $root = New-TempRepo
+        try {
+            Set-Registry $root '{"roots":[{"path":"Q:\\qa\\out","decision_id":"D-011"}]}'
+            Set-LedgerWithSupersede $root 'D-001' 'D-011'
+            $result = Invoke-Gate $root
+            $result.Code | Should Be 0
+            $result.Text | Should Not Match 'DECISION_SUPERSEDED'
+        } finally { Remove-TempRepo $root }
+    }
+
+    It 'passes when the registry cites a decision nobody superseded' {
+        $root = New-TempRepo
+        try {
+            Set-Registry $root '{"roots":[{"path":"Q:\\qa\\out","decision_id":"D-002"}]}'
+            # D-002 is a third row that nobody supersedes, so it can still be cited.
+            Set-LedgerWithSupersede $root 'D-001' 'D-011' @('D-002')
+            $result = Invoke-Gate $root
+            $result.Code | Should Be 0
+            $result.Text | Should Not Match 'DECISION_SUPERSEDED'
         } finally { Remove-TempRepo $root }
     }
 

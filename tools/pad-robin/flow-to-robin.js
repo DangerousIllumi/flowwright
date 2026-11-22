@@ -85,10 +85,10 @@ try {
 // ── Decision-ledger gate (A6) ─────────────────────────────────
 // Every risk node needs a decision recorded in business/decisions.jsonl and approved by a person, so the
 // flow is judged by the single implementation in tools/verify/check-decisions.js before anything is written.
-// Two-phase rollout: the mode is one named constant on purpose. It flips to "fail" together with the
-// default of check-decisions.js and the callers (pad-admit.ps1, CI) in one change, once every flow under
-// business/flows/ declares its decisions and every ledger record carries a class.
-const DECISION_GATE_MODE = "warn";
+// The mode is "fail": the business layer declares every risk node, the ledger carries a class on every row,
+// and `node tools/verify/check-decisions.js --ledger-only` reports "ledger-only passed". Keep the three
+// places (this constant, check-decisions.js's default, pad-admit.ps1's $decisionMode) in step.
+const DECISION_GATE_MODE = "fail";
 const repoRoot = path.resolve(__dirname, "..", "..");
 const decisionGatePath = path.join(repoRoot, "tools", "verify", "check-decisions.js");
 // --no-check only skips the static self-check, so this gate runs in every generation path.

@@ -263,7 +263,11 @@ Describe 'pad-schedule pure function tests' {
         $a = Write-RunAlert -FlowName 'PAD_SYNC_TEST' -ExitCode 1 -Stage 'run' `
             -Status 'failed' -SyncResult $sync -LogPath 'C:\x\Actions.log' -Dir $dir
         $a.path | Should Be (Join-Path $dir 'alerts.jsonl')
-        # PS 5.1's Add-Content emits a BOM, which breaks line-by-line parsing; this pins "no BOM"
+        # PS 5.1's Add-Content emits a BOM, which breaks line-by-line parsing; this pins "no BOM".
+        # Scope: this assertion only has teeth on Windows PowerShell 5.1, where Add-Content writes a BOM.
+        # On PowerShell 7 the writer omits the BOM, so the assertion passes for the wrong reason there -
+        # it becomes a vacuous pass, not a false alarm. Keep it: it still guards the 5.1 path this repo
+        # targets, and the code deliberately writes the file without a BOM.
         ([IO.File]::ReadAllBytes($a.path))[0] | Should Not Be 0xEF
         $rec = ([IO.File]::ReadAllText($a.path, [Text.Encoding]::UTF8)).Trim() | ConvertFrom-Json
         $rec.kind | Should Be 'run-failed'
