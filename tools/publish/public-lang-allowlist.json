@@ -31,6 +31,7 @@
       "tests/pad-flow-name.Tests.ps1",
       "tests/pad-release.Tests.ps1",
       "tests/pad-rollback.Tests.ps1",
+      "tests/pad-runlog.Tests.ps1",
       "tests/pad-schedule.Tests.ps1",
       "tests/PadTelemetry.Tests.ps1",
       "tests/policy-docs.Tests.ps1",

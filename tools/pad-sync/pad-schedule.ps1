@@ -215,6 +215,10 @@ function Get-CalendarFailure([System.Exception]$Exception) {
 # set of kind definitions and one de-duplication rule; this script keeps no copy.
 Import-Module (Join-Path $here 'PadAlerts.psm1') -Force
 
+# The single implementation of the run record (business\logs\<flow>\runs.jsonl) lives in PadRunLog.psm1:
+# the scheduled task is the outermost party that knows the exit code, so it writes the record itself
+Import-Module (Join-Path $here 'PadRunLog.psm1') -Force
+
 # Check the calendar to decide whether today is the last workday of this month. Returns [ordered]@{ lastWorkday; calendarOk }
 # Same policy as Test-TodayWorkday: any calendar or script problem is a hard failure; never fall back to Monday-Friday guessing
 function Test-TodayLastWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$CalendarPath) {
@@ -292,13 +296,26 @@ if (-not $NoMain) {
                 $syncArgs += @('-AcceptanceFile', $AcceptanceFile, '-ConfigFile', $ConfigFile)
             }
             # Stream the output while keeping it, so PAD_SYNC_RESULT can still be parsed (tickets and alerts need the stage)
+            $runStarted = [DateTimeOffset]::Now
             $syncLines = @(& powershell @syncArgs 2>&1 | ForEach-Object { Write-Host $_; $_ })
             $result.runExitCode = $LASTEXITCODE
             $result.ok = ($LASTEXITCODE -eq 0)
             $exitCode = $LASTEXITCODE
+            # Run record: one line per run, written once and only after the child ended. The producer's
+            # own status word and stage are the more specific evidence; the exit code backs them up
+            # (pad-sync exits 1 both before and after the flow starts, and only stage tells them apart).
+            # A failed write must not change the run result or the exit code — warn only.
+            $sync = Read-ChildResult -Name 'SYNC' -Lines $syncLines
+            try {
+                Write-RunRecord -Flow $FlowName -Source 'schedule' -StartedAt $runStarted.ToString('o') `
+                    -FinishedAt ([DateTimeOffset]::Now.ToString('o')) -Rc $exitCode `
+                    -StatusRaw $(if ($sync) { [string]$sync.status } else { $null }) `
+                    -Stage $(if ($sync) { [string]$sync.stage } else { $null }) | Out-Null
+            } catch {
+                Log "failed to write the run record: $($_.Exception.Message)"
+            }
             # Write an alert only on a real failure: non-workday skips already returned earlier, so they cannot raise false alarms
             if ($exitCode -ne 0) {
-                $sync = Read-ChildResult -Name 'SYNC' -Lines $syncLines
                 $stage = if ($sync) { [string]$sync.stage } else { 'unknown' }
                 $status = if ($sync) { [string]$sync.status } else { $null }
                 $logPath = if ($sync) { [string]$sync.logPath } else { $null }
