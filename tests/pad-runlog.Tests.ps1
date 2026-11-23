@@ -15,6 +15,27 @@ function Read-Records([string]$Root, [string]$Flow) {
     return @([IO.File]::ReadAllLines($file, [Text.Encoding]::UTF8) | Where-Object { $_.Trim() })
 }
 
+# The record writer converts every timestamp to the local offset, so the same instant is written as
+# "+08:00" on this machine and "+00:00" on a UTC runner. Assertions therefore compare instants, not
+# text: a timezone-dependent literal would only pass in one zone.
+function ConvertTo-RecordInstant([string]$Value) {
+    $parsed = [datetimeoffset]::MinValue
+    $ok = [datetimeoffset]::TryParse([string]$Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)
+    # Thrown rather than asserted: Pester 3.4's Should writes to the pipeline, and this function's
+    # return value is used in arithmetic
+    if (-not $ok) { throw "RUNRECORD_TEST_BAD_TIME: '$Value' is not an ISO 8601 time with an offset" }
+    return $parsed
+}
+
+# "Has an explicit offset" is a property of the text, and it must not be lost: a bare local time with
+# no offset would be ambiguous the moment the file leaves the machine that wrote it.
+function Assert-ExplicitOffset([string]$Value) {
+    [string]$Value | Should Match '[+-]\d\d:\d\d$'
+    [string]$Value | Should Not Match '(?i)Z$'
+}
+
 Describe 'run record: field set' {
 
     It 'always writes every field and leaves what it cannot observe null' {
@@ -196,7 +217,10 @@ Describe 'run record: the schedule entry forwards the stage' {
         $rec.stage | Should Be 'run'
         $rec.status_raw | Should Be 'Failed'
         $rec.status | Should Be 'FAILED'
-        [string]$rec.started_at | Should Match '^20\d\d-\d\d-\d\dT.*\+08:00$'
+        # started_at is "now" when the child was launched: assert the instant, not the local text
+        $started = ConvertTo-RecordInstant $rec.started_at
+        Assert-ExplicitOffset $rec.started_at
+        ([Math]::Abs(($started - [datetimeoffset]::Now).TotalMinutes) -lt 10) | Should Be $true
     }
 }
 
@@ -206,8 +230,17 @@ Describe 'run record: timestamps' {
         $root = New-LogRoot
         $w = Write-RunRecord -Flow 'F' -Source 'schedule' -StartedAt '2026-11-22T22:00:01.1234567+08:00' `
             -FinishedAt '2026-11-22T22:05:02+08:00' -Rc 0 -LogRoot $root
-        $w.record.started_at | Should Match '^2026-11-22T22:00:01\.1234567\+08:00$'
-        $w.record.finished_at | Should Be '2026-11-22T22:05:02.0000000+08:00'
+        Assert-ExplicitOffset $w.record.started_at
+        Assert-ExplicitOffset $w.record.finished_at
+        # The writer moves the value to the machine's own offset; what must survive is the instant
+        (ConvertTo-RecordInstant $w.record.started_at).UtcDateTime.Ticks |
+            Should Be ([datetimeoffset]'2026-11-22T22:00:01.1234567+08:00').UtcDateTime.Ticks
+        (ConvertTo-RecordInstant $w.record.finished_at).UtcDateTime.Ticks |
+            Should Be ([datetimeoffset]'2026-11-22T22:05:02+08:00').UtcDateTime.Ticks
+        # Sub-second precision is not truncated on the way
+        ([string]$w.record.started_at) | Should Match '\.1234567[+-]'
+        # ...and every record on this machine ends up on one offset, which is what makes the file sort
+        (ConvertTo-RecordInstant $w.record.started_at).Offset | Should Be ([datetimeoffset]::Now.Offset)
     }
 
     It 'keeps an empty timestamp null and refuses a value that is not a time' {
@@ -253,8 +286,12 @@ Describe 'run record: command-line entry point' {
         ($out -join "`n") | Should Match 'PAD_RUNRECORD_RESULT='
         $rec = @(Read-Records $root 'F')[0] | ConvertFrom-Json
         $rec.status | Should Be 'OK'
+        # started_at comes back unchanged in value: the CLI must not shift the caller's instant
+        (ConvertTo-RecordInstant $rec.started_at).UtcDateTime.Ticks |
+            Should Be ([datetimeoffset]'2026-11-22T09:00:00+08:00').UtcDateTime.Ticks
         # finished_at is filled with "now" when the caller did not measure it
-        [string]$rec.finished_at | Should Match '\+08:00$'
+        Assert-ExplicitOffset $rec.finished_at
+        ([Math]::Abs(((ConvertTo-RecordInstant $rec.finished_at) - [datetimeoffset]::Now).TotalMinutes) -lt 10) | Should Be $true
     }
 
     It 'prints nothing on success with -Quiet' {
@@ -315,7 +352,10 @@ Describe 'run record: PAD console extractor' {
         $records[0].status_raw | Should Be 'Succeeded'
         $records[0].run_id | Should Be 'run-a'
         $records[0].evidence | Should Match 'RunDefinition\.json$'
-        [string]$records[0].started_at | Should Match '\+08:00$'
+        Assert-ExplicitOffset $records[0].started_at
+        # PAD wrote the run time in UTC; the record must carry that same instant, not a shifted one
+        (ConvertTo-RecordInstant $records[0].started_at).UtcDateTime.Ticks |
+            Should Be ([datetimeoffset]'2026-11-22T09:00:00.1234567Z').UtcDateTime.Ticks
         $records[1].status | Should Be 'ABORTED'
         $records[1].status_raw | Should Be 'Cancelled'
     }
