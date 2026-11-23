@@ -7,14 +7,21 @@
 
       acceptance  -> build-acceptance.ps1 + pad-verify.ps1, bound to -Since; only checks that actually ran
                      enter acceptance[], an optional check that was skipped goes to skipped[] and is never
-                     recorded as pass (a pass is an assertion, a skipped check asserted nothing)
+                     recorded as pass (a pass is an assertion, a skipped check asserted nothing). Every
+                     optional check must carry an ASCII optional_reason in the spec, or no report is written;
+                     that reason is copied to skipped[].reason and registered in known_limitations as
+                     "skipped:<id>: <reason>". The generator copies, it never invents a reason.
       adversarial -> tests\harness\, one case at a time; cases not implemented yet are recorded as "gap"
       verdict     -> derived from the evidence above, never taken as an input
+      provenance  -> runner{path, sha256, run_id, generated_at} proves the gate who produced the report;
+                     environment_verified says whether acceptance ran in the real target environment, and
+                     defaults to false because a sandbox run only verifies logic
 
     The report is UTF-8. Console output is ASCII only; non-ASCII is escaped as \uXXXX.
 
     Usage:
-      .\tools\verify\run-test-report.ps1 -FlowName <name> [-WorkRoot <dir>] [-RunId <id>] [-Since <iso>] [-Json]
+      .\tools\verify\run-test-report.ps1 -FlowName <name> [-WorkRoot <dir>] [-RunId <id>] [-Since <iso>]
+          [-EnvironmentVerified true|false|unknown] [-Json]
     Exit codes: 0 report written, verdict=pass / 1 report written, verdict!=pass / 2 environment or declaration error
 #>
 [CmdletBinding()]
@@ -27,6 +34,7 @@ param(
     [string]$FlowFile,
     [string]$ConfigFile,
     [string]$ManifestPath,
+    [ValidateSet('true', 'false', 'unknown')][string]$EnvironmentVerified = 'false',
     [switch]$Json
 )
 
@@ -112,14 +120,27 @@ try {
     $buildOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $buildScript -FlowFile $FlowFile -OutFile $specPath 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { Stop-Env 'REPORT_ACCEPTANCE_BUILD_FAILED' ($buildOut.Trim()) }
 
+    # A skip is only acceptable when a human wrote why. An optional check without optional_reason is an
+    # illegal spec: no report is produced, so "not done" can never hide behind "did not need to be done".
+    $spec = Get-Content -LiteralPath $specPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $specChecks = @($spec.checks)
+    foreach ($c in $specChecks) {
+        if (-not [bool]$c.optional) { continue }
+        $reason = [string]$c.optional_reason
+        if (-not $reason.Trim()) {
+            Stop-Env 'REPORT_OPTIONAL_REASON_MISSING' ("optional check has no optional_reason: {0} (id: {1})" -f [string]$c.name, [string]$c.id)
+        }
+        if ($reason -match '[^\x20-\x7E]') {
+            Stop-Env 'REPORT_OPTIONAL_REASON_NOT_ASCII' ("optional_reason is not ASCII: {0}" -f [string]$c.name)
+        }
+    }
+
     $verifyOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript -AcceptanceFile $specPath -ConfigFile $ConfigFile -Since $Since.ToString('o') 2>&1 | Out-String
     $verifyCode = $LASTEXITCODE
     $verifyLine = ($verifyOut -split "`r?`n" | Where-Object { $_.StartsWith('PAD_VERIFY_RESULT=') } | Select-Object -Last 1)
     if (-not $verifyLine) { Stop-Env 'REPORT_VERIFY_NO_RESULT' 'pad-verify.ps1 printed no PAD_VERIFY_RESULT line' }
     $verify = $verifyLine.Substring('PAD_VERIFY_RESULT='.Length) | ConvertFrom-Json
 
-    $spec = Get-Content -LiteralPath $specPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $specChecks = @($spec.checks)
     $checkResults = @($verify.checks)
     if ($specChecks.Count -ne $checkResults.Count) {
         Stop-Env 'REPORT_ACCEPTANCE_MISMATCH' ("acceptance spec has {0} checks but pad-verify returned {1}" -f $specChecks.Count, $checkResults.Count)
@@ -127,6 +148,7 @@ try {
 
     $acceptance = New-Object System.Collections.ArrayList
     $skippedChecks = New-Object System.Collections.ArrayList
+    $skipLimitations = New-Object System.Collections.ArrayList
     for ($i = 0; $i -lt $specChecks.Count; $i++) {
         $c = $specChecks[$i]
         $r = $checkResults[$i]
@@ -137,13 +159,16 @@ try {
         if ($id -notmatch '^[a-z][a-z0-9-]{0,63}$') {
             Stop-Env 'REPORT_ACCEPTANCE_ID_NOT_ASCII' ("acceptance id is not a lowercase ASCII id: {0} (check: {1})" -f $id, [string]$c.name)
         }
-        # A skipped optional check asserted nothing, so it is not an acceptance item: it is reported separately.
+        # A skipped optional check asserted nothing, so it is not an acceptance item: it is reported
+        # separately, with the human-written reason copied verbatim and registered as a known limitation.
         if ([bool]$r.skipped) {
+            $skipReason = [string]$c.optional_reason
             [void]$skippedChecks.Add([ordered]@{
                 id     = $id
                 type   = [string]$c.type
-                reason = [string]$r.detail
+                reason = $skipReason
             })
+            [void]$skipLimitations.Add(('skipped:{0}: {1}' -f $id, $skipReason))
             continue
         }
         [void]$acceptance.Add([ordered]@{
@@ -177,6 +202,7 @@ try {
 
     $adversarial = New-Object System.Collections.ArrayList
     $limitations = New-Object System.Collections.ArrayList
+    foreach ($entry in $skipLimitations) { [void]$limitations.Add([string]$entry) }
     foreach ($file in $caseFiles) {
         $record = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
         $caseId = [string]$record.id
@@ -231,18 +257,35 @@ try {
     if ($acceptance.Count -eq 0 -or $adversarial.Count -eq 0) { $verdict = 'blocked' }
     elseif ($acceptanceFailed -gt 0 -or $bugs -gt 0) { $verdict = 'fail' }
 
+    # ---- provenance: the report has to prove it came from this script at this content ----
+    $scriptPath = [IO.Path]::GetFullPath($PSCommandPath)
+    if (-not $scriptPath.StartsWith($RepoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        Stop-Env 'REPORT_RUNNER_PATH_UNRESOLVED' ("the generator is not inside the repository root: {0}" -f $scriptPath)
+    }
+    $runnerPath = $scriptPath.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
+    $runnerHash = (Get-FileHash -LiteralPath $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $generatedAt = (Get-Date).ToString('o')
+    $environmentValue = $EnvironmentVerified
+    if ($EnvironmentVerified -ne 'unknown') { $environmentValue = ($EnvironmentVerified -eq 'true') }
+
     $report = [ordered]@{
-        flow              = $FlowName
-        run_id            = $RunId
-        since             = $Since.ToString('o')
-        runner            = 'tools/verify/run-test-report.ps1'
-        generated_at      = (Get-Date).ToString('o')
-        verdict           = $verdict
-        acceptance        = @($acceptance)
-        skipped           = @($skippedChecks)
-        adversarial       = @($adversarial)
-        known_limitations = @($limitations)
-        notes             = [ordered]@{
+        flow                 = $FlowName
+        run_id               = $RunId
+        since                = $Since.ToString('o')
+        runner               = [ordered]@{
+            path         = $runnerPath
+            sha256       = $runnerHash
+            run_id       = $RunId
+            generated_at = $generatedAt
+        }
+        generated_at         = $generatedAt
+        verdict              = $verdict
+        environment_verified = $environmentValue
+        acceptance           = @($acceptance)
+        skipped              = @($skippedChecks)
+        adversarial          = @($adversarial)
+        known_limitations    = @($limitations)
+        notes                = [ordered]@{
             acceptance_exit_code = $verifyCode
             acceptance_ok        = [bool]$verify.ok
             acceptance_skipped   = $skippedChecks.Count

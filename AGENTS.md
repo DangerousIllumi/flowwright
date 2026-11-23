@@ -158,7 +158,10 @@ A requirement is done only when all of the following hold:
    `.\tools\verify\check-test-report.ps1 -ReportFile <report>.json` exits 0. No report, or any verdict other
    than `pass`, stops the task here — it is not delivered on the strength of the first four items. The report
    cites its acceptance results and its adversarial results; a `gap` is allowed only when it is listed in
-   `known_limitations`.
+   `known_limitations`. The report must carry a `runner` object whose `sha256` equals the current
+   `tools/verify/run-test-report.ps1`, and an `environment_verified` of `true`/`false`/`unknown`, so a
+   hand-written pass report is rejected. Every `skipped[]` item carries its human-written
+   `optional_reason` and is registered as `skipped:<id>: <reason>` in `known_limitations`.
 
 See `docs/nl-to-flow-guide.md` for a worked example; the 18 copy-ready samples are in `tests/eval/fixtures/`
 (11 flows + 6 triggers + 1 reversibility counterexample).
