@@ -58,7 +58,7 @@ configuration table, run logs, state and snapshot files, and the scripts a flow 
 consequences follow:
 
 - A script writes its log to `business/logs/<flow>/`, never to a system or application directory
-  (`%APPDATA%`, a Trae command-output folder, `%TEMP%`). Those locations vanish on reinstall, are invisible to the
+  (`%APPDATA%`, an assistant tool's command-output folder, `%TEMP%`). Those locations vanish on reinstall, are invisible to the
   next person, and put order numbers and business paths outside the gate that protects `business/`.
 - A produced artifact (a PDF, a workbook, an exported report) may leave `business/` when its output root was
   declared as a decision and recorded in the decision ledger. That is a registered exception, not a default.
@@ -112,6 +112,13 @@ When everything passes, tell the user:
 `Failed: 0`, because some tests spawn child `powershell` processes that exit 1/2 by design and the leftover
 `$LASTEXITCODE` becomes the script's exit code. Trust the summary's `failed` count, or clear the variable when you
 need a clean exit status: `Invoke-Pester tests; exit 0`. The CI step already ends with `exit 0` for this reason.
+
+**PadLock tests locally**: inside a sandboxed terminal whose filesystem is mounted read-only,
+`tests\PadLock.Tests.ps1` ends at 5 passed / 3 failed. Those three are a known environment failure, not a
+regression; do not change the code or the tests to turn them green. The sandbox's write allowlist does not contain
+`%LOCALAPPDATA%\flow-ir`, while the ACL itself grants FullControl, so reads succeed and only writes and deletes
+are denied. For a real baseline run the file from a plain PowerShell window outside the sandbox (`-NoProfile`),
+where it reports 8/8. Never run this file in parallel: two processes compete for the same named mutex.
 
 ## 4. How to handle errors
 
