@@ -1,0 +1,4 @@
+{
+  "description": "Exceptions to check-hardcoded-paths.ps1. Every entry must carry file, match and a reason; the checker rejects an entry without a reason.",
+  "entries": []
+}

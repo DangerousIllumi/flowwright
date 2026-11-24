@@ -296,3 +296,61 @@ Describe 'Verdict gate' {
         } finally { Remove-TempRepo $root }
     }
 }
+
+Describe 'Stale optional exemption' {
+
+    It 'prints a warning for a stale exemption without changing the verdict' {
+        $root = New-ReportRepo
+        try {
+            $runner = New-RunnerJson $root
+            $report = New-Report $root ('{"runner":' + $runner + ',"verdict":"pass","environment_verified":true,"acceptance":[{"id":"fileexists-01","result":"pass","evidence":"fileExists: present"}],"adversarial":[{"case":"input/ok","result":"pass","evidence":"exit 2"}],"warnings":[{"code":"OPTIONAL_EXEMPTION_STALE","id":"fileexists-01","message":"fileexists-01 passed in this run, drop optional/optional_reason"}]}')
+            $result = Invoke-ReportGate $report $root
+            $result.Code | Should Be 0
+            $result.Text | Should Match 'verdict=pass'
+            $result.Text | Should Match 'WARNING optional exemption stale: fileexists-01 passed in this run'
+        } finally { Remove-TempRepo $root }
+    }
+
+    It 'makes the generator report an optional check that passed for real' {
+        $root = New-TempRepo
+        try {
+            Copy-Item -Path (Join-Path $script:Repo 'tools') -Destination $root -Recurse -Force
+            Copy-Item -Path (Join-Path $script:Repo 'tests') -Destination $root -Recurse -Force
+            Write-RepoFile $root 'tests\harness\cases.json' '{"entry":"tests/harness/entry/mini-entry.js","implemented":["input/missing-input-file"]}'
+
+            $padRoot = Join-Path $root 'padroot'
+            New-Item -ItemType Directory -Path $padRoot -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $padRoot 'exists.txt'), 'x', (New-Object Text.UTF8Encoding($false)))
+
+            $flow = @{
+                name       = 'opt-stale'
+                acceptance = @{ checks = @(@{
+                    name            = 'existing product'
+                    type            = 'fileExists'
+                    path            = '{{PAD_ROOT}}\exists.txt'
+                    optional        = $true
+                    optional_reason = 'kept as a waiver until the product reappears'
+                }) }
+            } | ConvertTo-Json -Depth 8
+            Write-RepoFile $root 'business\flows\opt-stale.json' $flow
+            Write-RepoFile $root 'business\config\opt-stale.json' (ConvertTo-Json @{ PAD_ROOT = $padRoot })
+
+            $generator = Join-Path $root 'tools\verify\run-test-report.ps1'
+            $generated = & powershell -NoProfile -ExecutionPolicy Bypass -File $generator -FlowName opt-stale -RunId r1 -Since '2026-01-01T00:00:00+08:00' -EnvironmentVerified true 2>&1
+            $generateCode = $LASTEXITCODE
+            $generatedText = ($generated -join "`n")
+            $generateCode | Should Be 0
+            $generatedText | Should Match 'OPTIONAL_EXEMPTION_STALE fileexists-01: passed in this run, drop optional/optional_reason'
+
+            $reportPath = Join-Path $root 'business\logs\opt-stale\test-report-r1.json'
+            $reportJson = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($reportJson.warnings)[0].code | Should Be 'OPTIONAL_EXEMPTION_STALE'
+            @($reportJson.warnings)[0].id | Should Be 'fileexists-01'
+
+            $result = Invoke-ReportGate $reportPath $root
+            $result.Code | Should Be 0
+            $result.Text | Should Match 'verdict=pass'
+            $result.Text | Should Match 'WARNING optional exemption stale: fileexists-01'
+        } finally { Remove-TempRepo $root }
+    }
+}

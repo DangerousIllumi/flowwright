@@ -149,6 +149,7 @@ try {
     $acceptance = New-Object System.Collections.ArrayList
     $skippedChecks = New-Object System.Collections.ArrayList
     $skipLimitations = New-Object System.Collections.ArrayList
+    $staleExemptions = New-Object System.Collections.ArrayList
     for ($i = 0; $i -lt $specChecks.Count; $i++) {
         $c = $specChecks[$i]
         $r = $checkResults[$i]
@@ -170,6 +171,15 @@ try {
             })
             [void]$skipLimitations.Add(('skipped:{0}: {1}' -f $id, $skipReason))
             continue
+        }
+        # An exemption exists to cover a gap. The moment the check passes for real, the gap is gone and the
+        # exemption outlives it: report that, so the next reader closes it instead of trusting a stale waiver.
+        if ([bool]$c.optional -and [bool]$r.ok) {
+            [void]$staleExemptions.Add([ordered]@{
+                code    = 'OPTIONAL_EXEMPTION_STALE'
+                id      = $id
+                message = ('{0} passed in this run, drop optional/optional_reason' -f $id)
+            })
         }
         [void]$acceptance.Add([ordered]@{
             id       = $id
@@ -283,6 +293,7 @@ try {
         environment_verified = $environmentValue
         acceptance           = @($acceptance)
         skipped              = @($skippedChecks)
+        warnings             = @($staleExemptions)
         adversarial          = @($adversarial)
         known_limitations    = @($limitations)
         notes                = [ordered]@{
@@ -304,6 +315,9 @@ try {
     Write-Output ("[run-test-report] flow={0} runId={1} verdict={2} acceptance={3} skipped={4} adversarial={5} gaps={6} bugs={7}" -f
         $FlowName, $RunId, $verdict, $acceptance.Count, $skippedChecks.Count, $adversarial.Count, $gaps, $bugs)
     Write-Output ("[run-test-report] report={0}" -f (ConvertTo-AsciiEscape $reportPath))
+    foreach ($warning in $staleExemptions) {
+        Write-Output ("OPTIONAL_EXEMPTION_STALE {0}: passed in this run, drop optional/optional_reason" -f $warning.id)
+    }
     if ($Json) { Write-Output ("TEST_REPORT_JSON=" + (ConvertTo-AsciiEscape $reportJson)) }
     if ($verdict -eq 'pass') { exit 0 } else { exit 1 }
 } finally {

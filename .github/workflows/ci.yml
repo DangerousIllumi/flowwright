@@ -57,6 +57,14 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-output-roots.ps1'"
           if ($LASTEXITCODE -ne 0) { throw "output-roots gate failed: $LASTEXITCODE" }
 
+      - name: "Hardcoded-path gate (a drive-letter path must come from config or an explained exception)"
+        shell: powershell
+        run: |
+          # business/ is excluded by .gitignore, so this gate skips on the public runner by design;
+          # a stale absolute path only exists where the business layer exists
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-hardcoded-paths.ps1'"
+          if ($LASTEXITCODE -ne 0) { throw "hardcoded-path gate failed: $LASTEXITCODE" }
+
       - name: "Adversarial-set gate (the hold-out cases stay out of the generator)"
         shell: powershell
         run: |

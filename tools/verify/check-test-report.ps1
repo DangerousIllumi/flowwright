@@ -18,7 +18,8 @@
         "acceptance":  [ { "id": "<assertion id>", "result": "pass" | "fail", "evidence": "<...>" } ],
         "skipped":     [ { "id": "<assertion id>", "type": "<check type>", "reason": "<human-written reason>" } ],
         "adversarial": [ { "case": "<category>/<name>", "result": "pass" | "bug" | "gap", "evidence": "<...>" } ],
-        "known_limitations": [ "<category>/<name>", ... ]
+        "known_limitations": [ "<category>/<name>", ... ],
+        "warnings": [ { "code": "OPTIONAL_EXEMPTION_STALE", "id": "<assertion id>", "message": "<...>" } ]
       }
 
     The gate answers one question: may this task be delivered? Only a report whose verdict is pass does
@@ -40,6 +41,10 @@
       9. a skipped[] item without a reason, or one not registered in known_limitations as
          "skipped:<id>: <reason>" -> SKIPPED_UNTRACED: optionality does not turn "not done" into
          "did not need to be done"; every skip carries a human-written reason and stays visible.
+
+    Warnings are not verdicts: a warnings[] entry with code OPTIONAL_EXEMPTION_STALE means an optional check
+    passed for real, so its exemption no longer covers a gap. The gate prints a WARNING for it and changes
+    nothing else: it is a prompt to close the exemption, not a reason to hold the delivery.
 
     Usage: .\tools\verify\check-test-report.ps1 -ReportFile <path> [-RepoRoot <path>]
     Exit codes: 0 only for a valid verdict=pass, 1 otherwise.
@@ -206,6 +211,14 @@ if ($violations.Count -eq 0) {
 
 if ($environmentVerified -and $environmentVerified -ne 'true') {
     Write-Output ("[check-test-report] WARNING logic verified, environment not verified (environment_verified={0}): the acceptance did not run in the real target environment" -f $environmentVerified)
+}
+
+# A stale exemption is housekeeping, not a contradiction: the check passed, so the waiver covers nothing.
+# Print it and leave the verdict alone, otherwise the note itself would block a deliverable report.
+$warningItems = @($report.warnings | Where-Object { $null -ne $_ })
+foreach ($warning in $warningItems) {
+    if ([string]$warning.code -ne 'OPTIONAL_EXEMPTION_STALE') { continue }
+    Write-Output ("[check-test-report] WARNING optional exemption stale: {0} passed in this run, drop optional/optional_reason" -f (ConvertTo-AsciiEscape ([string]$warning.id)))
 }
 
 if ($violations.Count -eq 0) { exit 0 }
