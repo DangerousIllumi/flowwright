@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Neutral entry used by the adversarial harness. It is not business code: it implements the
 // shell contract from docs/engine-selection.md section 3.2 and tools/script-entry/entry-template.js
-// so the five hold-out cases have an executable subject that returns a process exit code.
+// so the hold-out cases about a run's behaviour have an executable subject that returns a process exit code.
 //
 // Contract:
 //   1. Argument parsing  every path arrives as an argument; nothing about a real machine is hard-coded

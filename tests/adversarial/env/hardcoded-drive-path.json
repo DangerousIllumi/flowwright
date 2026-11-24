@@ -1,0 +1,17 @@
+{
+  "id": "env/hardcoded-drive-path",
+  "category": "env",
+  "given": "A script under business/scripts keeps the repository path of its old name as a literal drive-letter path (C:\\flow-ir\\...), while business/config declares a different root.",
+  "when": "The path-origin gate scans the business layer.",
+  "expected": {
+    "exit_code": 1,
+    "violation": "HARDCODED_PATH",
+    "side_effects": "the gate names the file and the line of the frozen path and stops the run; it does not rewrite the path for anyone"
+  },
+  "trigger": {
+    "gate": "tools/verify/check-hardcoded-paths.ps1",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools\\verify\\check-hardcoded-paths.ps1 -RepoRoot <sandbox>",
+    "sandbox": "the shape is built under the system temp directory by tests/gate-cases.Tests.ps1; nothing is written under the repository's business\\"
+  },
+  "why": "A drive-letter path outlives the repository rename it was written for: the code keeps pointing at a directory that no longer exists, and no runtime gate notices because nothing else reads the script's own strings."
+}

@@ -77,7 +77,7 @@ Describe 'Adversarial set gate' {
     It 'passes on this repository with all five categories represented' {
         $result = Invoke-SetGate $script:Repo
         $result.Code | Should Be 0
-        $result.Text | Should Match 'passed \(cases=5, categories=5\)'
+        $result.Text | Should Match 'passed \(cases=8, categories=5\)'
     }
 
     It 'fails when the hold-out set is absent' {

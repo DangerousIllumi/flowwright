@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Self-test for the neutral entry and the harness.
 //
-// It runs all five hold-out cases (not just the ones wired into the report yet) and prints
-// HARNESS_SELFTEST ok=<passed>/<total>. Exit 0 only when every case comes back as expected.
+// It runs the hold-out cases whose subject is the neutral entry (the ones listed as implemented in
+// tests/harness/cases.json) and prints HARNESS_SELFTEST ok=<passed>/<total>. Exit 0 only when every
+// case comes back as expected. A case whose subject is a verification gate has no entry strategy here:
+// it is triggered by tests/gate-cases.Tests.ps1, which runs the gate itself.
 // Sandboxes live under <work-root>/logs/harness-selftest/ and are removed by run-case.js.
 
 'use strict';
@@ -14,17 +16,14 @@ const { spawnSync } = require('child_process');
 const repoRoot = path.resolve(__dirname, '..', '..');
 const workArg = process.argv.indexOf('--work-root');
 const workRoot = workArg >= 0 ? path.resolve(process.argv[workArg + 1]) : path.join(repoRoot, 'business');
-const adversarialRoot = path.join(repoRoot, 'tests', 'adversarial');
 const runner = path.join(__dirname, 'run-case.js');
 
-const ids = [];
-for (const dir of fs.readdirSync(adversarialRoot, { withFileTypes: true })) {
-  if (!dir.isDirectory()) continue;
-  for (const name of fs.readdirSync(path.join(adversarialRoot, dir.name))) {
-    if (name.endsWith('.json')) ids.push(dir.name + '/' + name.slice(0, -5));
-  }
-}
-ids.sort();
+// Only the cases with a fault-injection strategy in run-case.js can be executed here. The set may
+// also hold cases whose subject is a verification gate; those have their own trigger and are run by
+// tests/gate-cases.Tests.ps1.
+const casesConfigPath = path.join(repoRoot, 'tests', 'harness', 'cases.json');
+const harness = JSON.parse(fs.readFileSync(casesConfigPath, 'utf8'));
+const ids = (harness.implemented || []).slice().sort();
 
 const stamp = Date.now().toString(36) + Math.random().toString(16).slice(2, 8);
 let passed = 0;

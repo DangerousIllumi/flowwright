@@ -1,0 +1,18 @@
+{
+  "id": "output/skipped-acceptance-untraced",
+  "category": "output",
+  "given": "An acceptance criterion is declared optional, the file it looks for never appears, so the criterion is skipped on every run; the report records the skip but does not register it as 'skipped:<id>: <reason>' in known_limitations.",
+  "when": "The verdict gate reads the report of that run.",
+  "expected": {
+    "exit_code": 1,
+    "violation": "SKIPPED_UNTRACED",
+    "side_effects": "the gate names the skip and the registration it expected, so the untraced skip cannot pass as a verdict=pass report"
+  },
+  "trigger": {
+    "gate": "tools/verify/check-test-report.ps1",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools\\verify\\check-test-report.ps1 -ReportFile <report>.json -RepoRoot <sandbox>",
+    "sandbox": "the shape is built under the system temp directory by tests/gate-cases.Tests.ps1; the report is produced by tools\\verify\\run-test-report.ps1, then the registration line is removed from a copy of it",
+    "counterpart": "the untouched report of the same run must pass: a traced skip is registered as 'skipped:<id>: <reason>' in known_limitations"
+  },
+  "why": "Optionality does not turn 'not done' into 'did not need to be done'. A skip that never reaches the summary is the silent gap that optional checks used to create, and a run that claims success while asserting nothing is the failure this case exists to catch."
+}

@@ -1,0 +1,17 @@
+{
+  "id": "input/reference-missing-script",
+  "category": "input",
+  "given": "A flow starts a script that exists, and that script derives a helper path from its own location; the helper was renamed away, so the derived target no longer exists.",
+  "when": "The referenced-path gate resolves the flow's script reference and then the script's own references.",
+  "expected": {
+    "exit_code": 1,
+    "violation": "REFERENCE_MISSING",
+    "side_effects": "the gate names the script and the line of the dead reference, so the flow is not delivered against a helper that will never be invoked"
+  },
+  "trigger": {
+    "gate": "tools/verify/check-referenced-paths.ps1",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools\\verify\\check-referenced-paths.ps1 -RepoRoot <sandbox>",
+    "sandbox": "the shape is built under the system temp directory by tests/gate-cases.Tests.ps1; nothing is written under the repository's business\\"
+  },
+  "why": "The other gates read structure; none of them opens the script a flow starts. So a helper path that outlived a rename stays invisible: the flow runs, the helper is never invoked, and the result file is never written."
+}
