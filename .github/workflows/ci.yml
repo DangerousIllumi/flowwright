@@ -49,29 +49,28 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-workflow-content.ps1' -Files (git ls-files)"
           if ($LASTEXITCODE -ne 0) { throw "workflow-content gate failed: $LASTEXITCODE" }
 
-      - name: "Output-root registry gate (a path outside business/ must be a registered exception)"
+      - name: "Gate tier: pre-generation (decision ledger + path origin + referenced targets)"
         shell: powershell
         run: |
-          # business/ is excluded by .gitignore, so this gate skips on the public runner by design;
-          # a missing registry only fails where the business layer actually exists
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-output-roots.ps1'"
-          if ($LASTEXITCODE -ne 0) { throw "output-roots gate failed: $LASTEXITCODE" }
+          # one command per tier; the tier is the same orchestrator a person runs locally.
+          # business/ is excluded by .gitignore, so the whole tier skips on the public runner by design.
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify\run-gates.ps1 -Tier pregen
+          if ($LASTEXITCODE -ne 0) { throw "pregen tier failed: $LASTEXITCODE" }
 
-      - name: "Hardcoded-path gate (a drive-letter path must come from config or an explained exception)"
+      - name: "Gate tier: admission (pre-generation + output roots + pad-admit)"
         shell: powershell
         run: |
-          # business/ is excluded by .gitignore, so this gate skips on the public runner by design;
-          # a stale absolute path only exists where the business layer exists
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-hardcoded-paths.ps1'"
-          if ($LASTEXITCODE -ne 0) { throw "hardcoded-path gate failed: $LASTEXITCODE" }
+          # business/ is excluded by .gitignore, so the whole tier skips on the public runner by design.
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify\run-gates.ps1 -Tier admit
+          if ($LASTEXITCODE -ne 0) { throw "admit tier failed: $LASTEXITCODE" }
 
-      - name: "Referenced-path gate (a script a flow starts must still resolve)"
+      - name: "Gate tier: delivery (hold-out set + acceptance execution + verdict)"
         shell: powershell
         run: |
-          # reads one layer: flow.json -> script -> the paths that script itself names, existence only.
-          # business/ is excluded by .gitignore, so this gate skips on the public runner by design.
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-referenced-paths.ps1'"
-          if ($LASTEXITCODE -ne 0) { throw "referenced-path gate failed: $LASTEXITCODE" }
+          # business/ is excluded by .gitignore, so the whole tier skips on the public runner by design;
+          # the public-layer hold-out check still runs below through its own step
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify\run-gates.ps1 -Tier deliver
+          if ($LASTEXITCODE -ne 0) { throw "deliver tier failed: $LASTEXITCODE" }
 
       - name: "Adversarial-set gate (the hold-out cases stay out of the generator)"
         shell: powershell

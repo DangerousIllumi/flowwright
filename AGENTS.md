@@ -34,7 +34,7 @@
 | `tools/workday/` | Workday calendar checks (general-purpose) |
 | `tools/xlsx/` | Read-only Excel layer (general-purpose): column lookup by header name, lenient date/number conversion, header inspection entry point (`--dump`) |
 | `tools/publish/` | Public-content denylist scan `check-public-safe.ps1`: blocks business terms and internal paths before a push |
-| `tools/verify/` | `check-adversarial-set.ps1` (hold-out case set, generator must not read it), `check-test-report.ps1` (delivery needs `verdict=pass`), and `check-referenced-paths.ps1` (one layer: a script a flow starts, and what that script names, must still exist); the cases live in `tests/adversarial/<category>/` |
+| `tools/verify/` | `run-gates.ps1` (the three tiers below, one command each), `check-adversarial-set.ps1` (hold-out case set, generator must not read it), `check-test-report.ps1` (delivery needs `verdict=pass`), and `check-referenced-paths.ps1` (one layer: a script a flow starts, and what that script names, must still exist); the cases live in `tests/adversarial/<category>/` |
 | `tools/script-entry/` | Entry template for a script a PAD shell flow starts (`docs/engine-selection.md` section 3.2): argument parsing, preflight that exits 2 before any work, `RUNNING` / `OK:` / `FAIL:` result file, exit code map |
 | `skills/pad-flow-designer/` | Design rules for requirement → `flow.json` |
 | `skills/pad-robin-coder/` | Red lines for writing scripts |
@@ -162,6 +162,22 @@ A requirement is done only when all of the following hold:
    `tools/verify/run-test-report.ps1`, and an `environment_verified` of `true`/`false`/`unknown`, so a
    hand-written pass report is rejected. Every `skipped[]` item carries its human-written
    `optional_reason` and is registered as `skipped:<id>: <reason>` in `known_limitations`.
+
+### 6.1 Three gate tiers, one command each
+
+The checks above used to be separate scripts with nothing that ran them together, which is how a dead
+script reference stayed invisible for months. Each tier is one command and runs every check that belongs to
+that moment; the generator runs the pre-generation tier itself, so a red check stops it before anything is
+written.
+
+| Tier | Command | Runs |
+|---|---|---|
+| Pre-generation | `.\tools\verify\run-gates.ps1 -Tier pregen -FlowFile <flow.json>` | decision ledger (`check-decisions.js --mode=fail`), path origin (`check-hardcoded-paths.ps1`), referenced targets (`check-referenced-paths.ps1`) |
+| Admission | `.\tools\verify\run-gates.ps1 -Tier admit -FlowFile <flow.json>` | the above, plus output-root registry (`check-output-roots.ps1`) and `pad-admit.ps1` (reversibility/ask, policy, fingerprint, preflight) |
+| Delivery | `.\tools\verify\run-gates.ps1 -Tier deliver -FlowFile <flow.json>` | hold-out set (`check-adversarial-set.ps1`), acceptance execution and report production (`run-test-report.ps1`), verdict (`check-test-report.ps1`) |
+
+Each tier prints one ASCII summary line (`checks=`, `red=`, `skip=`) and exits 0 pass/skip, 1 red, 2 blocked.
+Without a `business/` layer every tier prints `skip: business layer not present` and exits 0.
 
 See `docs/nl-to-flow-guide.md` for a worked example; the 18 copy-ready samples are in `tests/eval/fixtures/`
 (11 flows + 6 triggers + 1 reversibility counterexample).

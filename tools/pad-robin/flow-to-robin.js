@@ -82,35 +82,37 @@ try {
   }
 }
 
-// ── Decision-ledger gate (A6) ─────────────────────────────────
-// Every risk node needs a decision recorded in business/decisions.jsonl and approved by a person, so the
-// flow is judged by the single implementation in tools/verify/check-decisions.js before anything is written.
-// The mode is "fail": the business layer declares every risk node, the ledger carries a class on every row,
-// and `node tools/verify/check-decisions.js --ledger-only` reports "ledger-only passed". Keep the three
-// places (this constant, check-decisions.js's default, pad-admit.ps1's $decisionMode) in step.
-const DECISION_GATE_MODE = "fail";
+// ── Pre-generation gate tier (one command) ────────────────────
+// The decision ledger, the path-origin gate and the referenced-target gate are one tier, invoked through
+// the single orchestrator that also serves a person at the command line. The tier owns the verdicts; this
+// file only enforces them before anything is written. --no-check skips the static self-check, not this gate.
+// The tier's own output is ASCII, so decoding it as utf8 here is safe, and its exit code is the process
+// exit code (0 pass/skip, 1 red, 2 blocked) — the same contract the decision gate used.
 const repoRoot = path.resolve(__dirname, "..", "..");
-const decisionGatePath = path.join(repoRoot, "tools", "verify", "check-decisions.js");
-// --no-check only skips the static self-check, so this gate runs in every generation path.
-if (fs.existsSync(decisionGatePath)) {
-  const gate = spawnSync(process.execPath, [decisionGatePath, flowPath, "--mode=" + DECISION_GATE_MODE], { encoding: "utf8" });
-  // Pipe the child report through so the ASCII summary is visible in this process's output
-  if (gate.stdout) process.stdout.write(gate.stdout);
-  if (gate.stderr) process.stderr.write(gate.stderr);
-  if (gate.error) {
-    console.error("=== Decision-ledger gate could not run ===");
-    console.error("  x " + gate.error.message);
-    console.error("\nnothing was generated. Fix the environment and run again.");
-    process.exit(1);
-  }
-  if (gate.status !== 0) {
-    console.error("=== Decision-ledger gate rejected the flow ===");
-    console.error(`  x check-decisions.js exited ${gate.status}; the report above lists the violations`);
-    console.error("\n1 error(s); nothing was generated. Fix the decisions and the ledger, then run again.");
-    process.exit(1);
-  }
-} else {
-  console.error("[warning] check-decisions.js not found; skipping the decision gate");
+const pregenGatePath = path.join(repoRoot, "tools", "verify", "run-gates.ps1");
+if (!fs.existsSync(pregenGatePath)) {
+  console.error("=== Pre-generation gate is missing ===");
+  console.error("  x tools/verify/run-gates.ps1 not found; nothing was generated.");
+  process.exit(1);
+}
+const pregenRun = spawnSync("powershell.exe", [
+  "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", pregenGatePath,
+  "-Tier", "pregen", "-FlowFile", flowPath, "-RepoRoot", repoRoot,
+], { encoding: "utf8" });
+// Pipe the child report through so the ASCII summary is visible in this process's output
+if (pregenRun.stdout) process.stdout.write(pregenRun.stdout);
+if (pregenRun.stderr) process.stderr.write(pregenRun.stderr);
+if (pregenRun.error) {
+  console.error("=== Pre-generation gate could not run ===");
+  console.error("  x " + pregenRun.error.message);
+  console.error("\nnothing was generated. Fix the environment and run again.");
+  process.exit(1);
+}
+if (pregenRun.status !== 0) {
+  console.error("=== Pre-generation gate rejected the flow ===");
+  console.error(`  x run-gates.ps1 -Tier pregen exited ${pregenRun.status}; the report above lists the red checks`);
+  console.error("\nnothing was generated. Fix the red checks, then run again.");
+  process.exit(1);
 }
 
 // Handle type → name of the upstream variable that produces it (filled in at runtime)
