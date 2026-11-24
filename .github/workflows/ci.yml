@@ -65,6 +65,14 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-hardcoded-paths.ps1'"
           if ($LASTEXITCODE -ne 0) { throw "hardcoded-path gate failed: $LASTEXITCODE" }
 
+      - name: "Referenced-path gate (a script a flow starts must still resolve)"
+        shell: powershell
+        run: |
+          # reads one layer: flow.json -> script -> the paths that script itself names, existence only.
+          # business/ is excluded by .gitignore, so this gate skips on the public runner by design.
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\verify\check-referenced-paths.ps1'"
+          if ($LASTEXITCODE -ne 0) { throw "referenced-path gate failed: $LASTEXITCODE" }
+
       - name: "Adversarial-set gate (the hold-out cases stay out of the generator)"
         shell: powershell
         run: |

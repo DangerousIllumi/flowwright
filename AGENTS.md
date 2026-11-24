@@ -34,7 +34,7 @@
 | `tools/workday/` | Workday calendar checks (general-purpose) |
 | `tools/xlsx/` | Read-only Excel layer (general-purpose): column lookup by header name, lenient date/number conversion, header inspection entry point (`--dump`) |
 | `tools/publish/` | Public-content denylist scan `check-public-safe.ps1`: blocks business terms and internal paths before a push |
-| `tools/verify/` | `check-adversarial-set.ps1` (hold-out case set, generator must not read it) and `check-test-report.ps1` (delivery needs `verdict=pass`); the cases live in `tests/adversarial/<category>/` |
+| `tools/verify/` | `check-adversarial-set.ps1` (hold-out case set, generator must not read it), `check-test-report.ps1` (delivery needs `verdict=pass`), and `check-referenced-paths.ps1` (one layer: a script a flow starts, and what that script names, must still exist); the cases live in `tests/adversarial/<category>/` |
 | `tools/script-entry/` | Entry template for a script a PAD shell flow starts (`docs/engine-selection.md` section 3.2): argument parsing, preflight that exits 2 before any work, `RUNNING` / `OK:` / `FAIL:` result file, exit code map |
 | `skills/pad-flow-designer/` | Design rules for requirement → `flow.json` |
 | `skills/pad-robin-coder/` | Red lines for writing scripts |
