@@ -30,13 +30,32 @@ function Remove-SandboxRepo {
     }
 }
 
+# Native stderr is captured through files, never through 2>&1. PowerShell 5.1 turns a native process's
+# stderr into an ErrorRecord, and when the caller runs with $ErrorActionPreference = 'Stop' that becomes a
+# terminating error which aborts the test block before any assertion runs. Start-Process is not subject to
+# the preference, so the test judges the exit code and the streams instead of inheriting the caller's setting.
+function Invoke-Captured {
+    param([string]$FilePath, [string[]]$Arguments)
+    $stdoutFile = [IO.Path]::GetTempFileName()
+    $stderrFile = [IO.Path]::GetTempFileName()
+    try {
+        $quoted = @($Arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+        $process = Start-Process -FilePath $FilePath -ArgumentList $quoted -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+        $stdout = [IO.File]::ReadAllText($stdoutFile)
+        $stderr = [IO.File]::ReadAllText($stderrFile)
+        return @{ Code = $process.ExitCode; StdOut = $stdout; StdErr = $stderr; Text = ($stdout + "`n" + $stderr) }
+    } finally {
+        Remove-Item -LiteralPath $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-Tier {
     param([string]$Tier, [string]$Root, [string[]]$Extra = @())
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:GateScript, '-Tier', $Tier)
     $arguments += $Extra
     if ($Root) { $arguments += @('-RepoRoot', $Root) }
-    $output = & powershell @arguments 2>&1
-    return @{ Code = $LASTEXITCODE; Text = ($output -join "`n") }
+    return Invoke-Captured 'powershell' $arguments
 }
 
 function Write-Text {
@@ -106,9 +125,9 @@ Describe 'Gate tiers' {
             $kb = Join-Path $root 'kb.json'
             Copy-Item -LiteralPath (Join-Path $script:Repo 'examples\smoke-kb.json') -Destination $kb -Force
             $robins = Join-Path $root 'out.robin'
-            $generated = & node (Join-Path $root 'tools\pad-robin\flow-to-robin.js') $flow $robins '--kb' $kb '--no-check' 2>&1
-            $LASTEXITCODE | Should Be 1
-            (($generated -join "`n") -match 'Pre-generation gate rejected the flow') | Should Be $true
+            $generated = Invoke-Captured 'node' @((Join-Path $root 'tools\pad-robin\flow-to-robin.js'), $flow, $robins, '--kb', $kb, '--no-check')
+            $generated.Code | Should Be 1
+            ($generated.StdErr -match 'Pre-generation gate rejected the flow') | Should Be $true
             (Test-Path -LiteralPath $robins) | Should Be $false
         } finally { Remove-SandboxRepo $root }
     }
