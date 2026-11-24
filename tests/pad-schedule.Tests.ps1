@@ -8,7 +8,55 @@
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-schedule.ps1') -NoMain
 
+# pad-schedule has no alert-directory parameter: a calendar failure appends to <repo>\business\logs\alerts.jsonl,
+# and two cases below deliberately make the calendar fail. Snapshot that file before each case and restore it
+# after (AfterEach runs on failure too): an existing log is truncated back to its original length, and
+# directories are removed only when this test created them and they are empty. A real business layer is
+# never deleted.
+function Get-AlertLogState {
+    $businessDir = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\business'))
+    $logDir = Join-Path $businessDir 'logs'
+    $file = Join-Path $logDir 'alerts.jsonl'
+    $fileExisted = Test-Path -LiteralPath $file
+    return [pscustomobject]@{
+        File            = $file
+        LogDir          = $logDir
+        BusinessDir     = $businessDir
+        LogDirExisted   = (Test-Path -LiteralPath $logDir)
+        BusinessExisted = (Test-Path -LiteralPath $businessDir)
+        FileExisted     = $fileExisted
+        Length          = $(if ($fileExisted) { (Get-Item -LiteralPath $file).Length } else { 0 })
+    }
+}
+
+function Restore-AlertLogState {
+    param($State)
+    if ($State.FileExisted) {
+        if (Test-Path -LiteralPath $State.File) {
+            $stream = [IO.File]::Open($State.File, [IO.FileMode]::Open, [IO.FileAccess]::Write)
+            try { $stream.SetLength($State.Length) } finally { $stream.Dispose() }
+        }
+        return
+    }
+    if (Test-Path -LiteralPath $State.File) { Remove-Item -LiteralPath $State.File -Force }
+    $prune = @()
+    if (-not $State.LogDirExisted) { $prune += $State.LogDir }
+    if (-not $State.BusinessExisted) { $prune += $State.BusinessDir }
+    foreach ($dir in $prune) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        if (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1) { continue }
+        Remove-Item -LiteralPath $dir -Force
+    }
+}
+
+# Recorded at load, before any case runs: the regression guard below only has teeth where the repository
+# starts without a business layer (CI). On a machine with a real business layer there is nothing to assert.
+$script:businessExistedAtLoad = (Test-Path -LiteralPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\business'))))
+
 Describe 'pad-schedule pure function tests' {
+
+    BeforeEach { $script:alertLogState = Get-AlertLogState }
+    AfterEach { Restore-AlertLogState $script:alertLogState }
 
     It 'task name: default prefix plus flow name' {
         (Get-ScheduleTaskName 'PAD_SYNC_TEST') | Should Be 'flow-ir-PAD_SYNC_TEST'
@@ -364,5 +412,14 @@ Describe 'pad-schedule pure function tests' {
             Should Be 'run-lock-timeout'
         (Write-RunAlert -FlowName 'F' -ExitCode 1 -Stage 'run' -Dir $dir).record.kind |
             Should Be 'run-failed'
+    }
+
+    It 'leaves no business/ tree behind in the repository root' {
+        # Regression guard for the alert-log leak: a calendar-failure case writes to <repo>\business\logs and
+        # the AfterEach hook must put it back. The assertion only has teeth where the repository started
+        # without a business layer (CI); on a machine with a real one the directory legitimately exists, so
+        # this case asserts nothing there rather than deleting or tolerating the real layer.
+        if ($script:businessExistedAtLoad) { return }
+        (Test-Path -LiteralPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\business')))) | Should Be $false
     }
 }
