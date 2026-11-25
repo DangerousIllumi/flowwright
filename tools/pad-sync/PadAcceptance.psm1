@@ -143,7 +143,8 @@ function Test-AcceptanceFile {
                 }
             }
             elseif ($c.type -eq 'logState') {
-                # Read an existing VBS log: take a line by firstLine / lastLine, then check skip first, then fail, then pass
+                # Read an existing VBS log: take a line by firstLine / lastLine, then check skip first, then fail, then pass.
+                # skip may only skip an optional check; a required check that hits skip is a failure.
                 $p = Resolve-AcceptancePath ([string]$c.path) $Config
                 if (-not (Test-Path -LiteralPath $p)) {
                     if ($optional) { $item.skipped = $true; $item.detail = 'log not found (optional)' }
@@ -156,8 +157,12 @@ function Test-AcceptanceFile {
                     } else {
                         $line = $(if ([string]$c.mode -eq 'lastLine') { $lines[-1] } else { $lines[0] })
                         if ($c.skip -and $line -match [string]$c.skip) {
-                            $item.skipped = $true
-                            $item.detail = "state is $($c.skip); not applicable"
+                            if ($optional) {
+                                $item.skipped = $true
+                                $item.detail = "state '$line' skipped (optional); not applicable"
+                            } else {
+                                $item.detail = "state '$line' is not acceptable for a required check"
+                            }
                         } elseif ($c.fail -and $line -match [string]$c.fail) {
                             $item.detail = "failure marker hit: $line"
                         } elseif ($c.pass -and $line -match [string]$c.pass) {

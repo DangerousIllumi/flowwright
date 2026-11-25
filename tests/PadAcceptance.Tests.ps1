@@ -161,15 +161,57 @@ Describe 'PadAcceptance' {
         $r.checks[0].detail | Should Match 'POST_FAILED'
     }
 
-    It 'logState: skips while the export save log is RUNNING' {
+    It 'logState: skips while the export save log is RUNNING (optional)' {
         $d = New-CaseDir
         Write-Utf8NoBom (Join-Path $d 'saveas_result.txt') 'RUNNING'
         $spec = New-Spec $d @(@{
             name = 'saveas'; type = 'logState'; path = '{{ROOT}}\saveas_result.txt'
-            mode = 'firstLine'; pass = '^OK'; fail = '^FAIL'; skip = '^RUNNING$'
+            mode = 'firstLine'; pass = '^OK'; fail = '^FAIL'; skip = '^RUNNING$'; optional = $true
         })
         $r = Test-AcceptanceFile -Path $spec -Config @{ ROOT = $d }
         $r.ok | Should Be $true
         $r.skipped | Should Be 1
+    }
+
+    It 'logState: optional check hitting skip is skipped and detail names the actual state' {
+        $d = New-CaseDir
+        Write-Utf8NoBom (Join-Path $d 'saveas_result.txt') 'STOPPED:sap_native'
+        $spec = New-Spec $d @(@{
+            name = 'saveas'; type = 'logState'; path = '{{ROOT}}\saveas_result.txt'
+            mode = 'firstLine'; pass = '^OK'; fail = '^FAIL'; skip = '^RUNNING$|^STOPPED:'; optional = $true
+        })
+        $r = Test-AcceptanceFile -Path $spec -Config @{ ROOT = $d }
+        $r.ok | Should Be $true
+        $r.skipped | Should Be 1
+        $r.checks[0].skipped | Should Be $true
+        $r.checks[0].detail | Should Match 'STOPPED:sap_native'
+    }
+
+    It 'logState: required check hitting skip fails instead of skipping' {
+        $d = New-CaseDir
+        Write-Utf8NoBom (Join-Path $d 'saveas_result.txt') 'STOPPED:sap_native'
+        $spec = New-Spec $d @(@{
+            name = 'saveas'; type = 'logState'; path = '{{ROOT}}\saveas_result.txt'
+            mode = 'firstLine'; pass = '^OK'; fail = '^FAIL'; skip = '^RUNNING$|^STOPPED:'
+        })
+        $r = Test-AcceptanceFile -Path $spec -Config @{ ROOT = $d }
+        $r.ok | Should Be $false
+        $r.failed | Should Be 1
+        $r.skipped | Should Be 0
+        $r.checks[0].skipped | Should Be $false
+        $r.checks[0].detail | Should Match "state 'STOPPED:sap_native' is not acceptable for a required check"
+    }
+
+    It 'logState: required check still passes on the pass marker when skip is configured' {
+        $d = New-CaseDir
+        Write-Utf8NoBom (Join-Path $d 'saveas_result.txt') 'OK:Results\export.xlsx'
+        $spec = New-Spec $d @(@{
+            name = 'saveas'; type = 'logState'; path = '{{ROOT}}\saveas_result.txt'
+            mode = 'firstLine'; pass = '^OK'; fail = '^FAIL'; skip = '^RUNNING$|^STOPPED:'
+        })
+        $r = Test-AcceptanceFile -Path $spec -Config @{ ROOT = $d }
+        $r.ok | Should Be $true
+        $r.passed | Should Be 1
+        $r.skipped | Should Be 0
     }
 }
