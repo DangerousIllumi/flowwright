@@ -36,12 +36,12 @@ The assertions below are **not** tautological. Each of them goes red under the c
 
 | File:line | Assertion | Mutation | Result |
 |---|---|---|---|
-| `pad-schedule.Tests.ps1:45` | `Should Not Match 'RunOnly'` | The workday gating branch also prints `-RunOnly` | **Red** (`action command: workday calendar mode…`) |
-| `pad-schedule.Tests.ps1:61,72,93` | `Should Not Match 'RUN_START'` | Drop the "missing calendar" guard so the run continues | **Red** (2 cases: `run entry without a calendar`, `register mode without a calendar`) |
-| `pad-schedule.Tests.ps1:113` | `Should Not Match 'CONFIG_MISSING'` | The ignore-calendar path also prints `CONFIG_MISSING` | **Red** |
-| `pad-schedule.Tests.ps1:144,145` | `Should Not Match 'RunIfWorkday'` / `'AllowProd'` | Ignore-calendar mode also emits `-RunIfWorkday` | **Red** |
-| `pad-schedule.Tests.ps1:169,174` | `Should Not Match '-LockWaitSec'` | Write `-LockWaitSec` into the task command | **Red** |
-| `pad-schedule.Tests.ps1:271` | First byte `Should Not Be 0xEF` | The alert file carries a BOM (PS 5.1 `Add-Content` behaviour) | Effective (asserts the first byte directly) |
+| `pad-schedule.Tests.ps1:93` | `Should Not Match 'RunOnly'` | The workday gating branch also prints `-RunOnly` | **Red** (`action command: workday calendar mode…`) |
+| `pad-schedule.Tests.ps1:109,120,141` | `Should Not Match 'RUN_START'` | Drop the "missing calendar" guard so the run continues | **Red** (2 cases: `run entry without a calendar`, `register mode without a calendar`) |
+| `pad-schedule.Tests.ps1:161` | `Should Not Match 'CONFIG_MISSING'` | The ignore-calendar path also prints `CONFIG_MISSING` | **Red** |
+| `pad-schedule.Tests.ps1:192,193` | `Should Not Match 'RunIfWorkday'` / `'AllowProd'` | Ignore-calendar mode also emits `-RunIfWorkday` | **Red** |
+| `pad-schedule.Tests.ps1:217,222` | `Should Not Match '-LockWaitSec'` | Write `-LockWaitSec` into the task command | **Red** |
+| `pad-schedule.Tests.ps1:319` | First byte `Should Not Be 0xEF` | The alert file carries a BOM (PS 5.1 `Add-Content` behaviour) | Effective (asserts the first byte directly) |
 | `trigger-registry.Tests.ps1:213` | Hash `Should Not Be $base` | time changed from 09:00 to 10:00 | Effective (the hash includes time) |
 | `trigger-registry.Tests.ps1:226` | `$h2 Should Not Be $h1` | The `assisted` field is dropped from the hash | **Red** (`assisted is part of specHash…`) |
 | `trigger-registry.Tests.ps1:259,274` | `Should Not Match 'RunOnly'` / `'RunIfWorkday'` | Change the gating-branch argument string | Effective (same origin as pad-schedule) |
@@ -67,7 +67,7 @@ The assertions below are **not** tautological. Each of them goes red under the c
 | File:line | Assertion | Why it is only nearly tautological | What you need to decide |
 |---|---|---|---|
 | `trigger-registry.Tests.ps1:505` | `$h2 \| Should Not Be $h1` (days change → hash change) | days is written into the canonical hash, but when `daysDeclared` is false days is normalized to the same Monday-to-Friday set, so the hash really changes **only when an explicit declaration differs from an omitted one**. A mutation that pins `days` in the hash to `@()` did **not** make this go red (still 37/37 green) — this assertion currently has discriminating power only for the "days declared" input, and the test happens to cover only that one | Whether to add a case for "the hash of an explicit mon..fri declaration differs from the hash of an omitted days" (which is exactly why `scheduleKind` exists), turning it from "nearly tautological" into "effective" |
-| `pad-schedule.Tests.ps1:271` | Alert JSONL first byte `Should Not Be 0xEF` | Effective (asserts the byte directly), but it relies on PS 5.1 `Add-Content` writing a BOM by default; PS 7 does not, so under PS 7 it **falsely passes** | Whether to annotate the test with "this assertion only means something on PS 5.1" |
+| `pad-schedule.Tests.ps1:319` | Alert JSONL first byte `Should Not Be 0xEF` | Effective (asserts the byte directly), but it relies on PS 5.1 `Add-Content` writing a BOM by default; PS 7 does not, so under PS 7 it **falsely passes** | Whether to annotate the test with "this assertion only means something on PS 5.1" |
 | Several `doesNotMatch(/violation/)`, `/DECISION_NOT_USER_APPROVED/`, `/RISK_NODE_DECISION_NOT_RISK/` in `check-decisions.test.js` | "the report does not contain a certain word" | Effective: under the corresponding fixture the forbidden code **does** appear (loosening the gate would print it) | No change needed |
 | `doesNotMatch(/skip:/)`, `doesNotMatch(/warn:/)`, `doesNotMatch(/failed:/)` in `check-decisions.test.js` | "the report does not contain the wording of another mode" | Effective: the wording of a mode is hard-coded by the implementation, so a gate change exposes it immediately | No change needed |
 | The two `assert.ok(!/[\u0080-\uFFFF]/…)` checks in `check-decisions.test.js` | No raw non-ASCII characters in the output | Effective: the gate would write raw Chinese if it did not escape | The assertion order was adjusted this round (check raw characters first, then printable ASCII) so the "escaping" assertion can really fail — in the original order the helper's printable-ASCII guard would fail first and the raw-character check would never get its turn, a hidden tautology of the "second assertion never gets its turn" kind |
