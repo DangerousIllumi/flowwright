@@ -194,7 +194,7 @@ function loadLedger(ledgerPath, ledgerLabel, add) {
  */
 function checkDecisions(flowFile, options = {}) {
   const repo = options.repo || path.resolve(__dirname, "..", "..");
-  const mode = options.mode || "warn";
+  const mode = options.mode || "fail";
   const ledgerGiven = options.ledger != null;
   const businessDir = path.join(repo, "business");
   const businessPresent = fs.existsSync(businessDir);
