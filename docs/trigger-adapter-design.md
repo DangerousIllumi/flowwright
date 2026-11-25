@@ -57,6 +57,13 @@ and does not describe process steps. Registration is an **operating-system-level
 `manual` allows only `{ "kind": "manual" }`; any `time`/`file`/`assisted` field makes it invalid (this prevents
 "declared but never executed").
 
+`scheduleKind` is not a field in `flow.json`: it is derived during registration and takes only `daily` or
+`weekly`. `Get-TriggerSpec` sets it to `daily` only for a `schedule` trigger that declares no `days` and carries a
+calendar gate (`workday`/`last-workday`); every other non-`manual` trigger — `file`, an explicit `days` list, or
+`gate=none` — is `weekly`. At registration the value picks the Windows trigger shape: `weekly` builds a `-Weekly`
+task on the declared (or default `mon`–`fri`) weekdays so weekends never wake the machine, while `daily` builds a
+`-Daily` task and lets the calendar gate skip non-workdays on its own.
+
 **Migrating the old shape**: the existing `{ "type": "...", "config": {...} }` is treated as a legacy shape and
 reported as `TRIGGER_LEGACY_SHAPE` (a warning during the observation period; it becomes fail once migration
 finishes). There is no silent mapping — `type: "event"` and `config.dayOfMonth` cannot be mapped reliably onto `kind`.

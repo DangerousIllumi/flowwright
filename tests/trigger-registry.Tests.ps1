@@ -504,4 +504,23 @@ Describe 'TriggerRegistry days take effect as Weekly' {
         $h2 = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f2)
         $h2 | Should Not Be $h1
     }
+
+    It 'Explicitly declaring the default weekdays mon..fri is NOT the same as omitting days: hash must differ' {
+        # Omitted days: daysDeclared=false, scheduleKind stays daily (gate=workday), days defaults to mon..fri
+        $t1 = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        # Explicit days = the same mon..fri values: daysDeclared=true, scheduleKind becomes weekly
+        $t2 = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday'
+            days = @('mon', 'tue', 'wed', 'thu', 'fri') }
+        $f1 = New-TestFlow -Dir $TestDrive -Name 'days-default-a' -Trigger $t1
+        $f2 = New-TestFlow -Dir $TestDrive -Name 'days-default-b' -Trigger $t2
+        $spec1 = Get-TriggerSpec -FlowFile $f1
+        $spec2 = Get-TriggerSpec -FlowFile $f2
+        # The effective weekday sets are identical, only the declared shape differs
+        ($spec1.days -join ',') | Should Be ($spec2.days -join ',')
+        $spec1.scheduleKind | Should Be 'daily'
+        $spec2.scheduleKind | Should Be 'weekly'
+        $h1 = Get-TriggerFingerprint -Spec $spec1
+        $h2 = Get-TriggerFingerprint -Spec $spec2
+        $h2 | Should Not Be $h1
+    }
 }
