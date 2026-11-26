@@ -97,7 +97,7 @@ Describe 'Gate tiers' {
         } finally { Remove-SandboxRepo $root }
     }
 
-    It 'passes the pre-generation tier on a clean flow (three checks actually ran)' {
+    It 'passes the pre-generation tier on a clean flow (four checks actually ran)' {
         $root = New-SandboxRepo -WithBusiness
         try {
             $flow = Join-Path $root 'business\flows\ok.json'
@@ -105,9 +105,45 @@ Describe 'Gate tiers' {
             $result = Invoke-Tier 'pregen' $root @('-FlowFile', $flow)
             $result.Code | Should Be 0
             $result.Text | Should Match 'decisions: pass'
+            $result.Text | Should Match 'declarations-warn: pass'
             $result.Text | Should Match 'hardcoded-paths: pass'
             $result.Text | Should Match 'referenced-paths: pass'
-            $result.Text | Should Match 'checks=3, red=0'
+            $result.Text | Should Match 'inputs-self-produced: pass'
+            $result.Text | Should Match 'task-name-collision: pass'
+            $result.Text | Should Match 'checks=6, red=0'
+        } finally { Remove-SandboxRepo $root }
+    }
+
+    It 'lists a node missing reversible but still passes the pre-generation tier (warn-only)' {
+        $root = New-SandboxRepo -WithBusiness
+        try {
+            $flow = Join-Path $root 'business\flows\incomplete.json'
+            Write-Text $flow '{"name":"incomplete","variables":[],"nodes":[{"id":"n1","pad_hint":"File.Copy","params":{},"run_mode":"auto","idempotent":true}]}'
+            $result = Invoke-Tier 'pregen' $root @('-FlowFile', $flow)
+            # the check is advisory: an incomplete declaration is named, never turned into red or blocked
+            $result.Code | Should Be 0
+            $result.Text | Should Match 'declarations-warn: pass'
+            $result.Text | Should Match 'node n1: reversible'
+            $result.Text | Should Match 'warn-only, generation is not blocked'
+            $result.Text | Should Match 'checks=6, red=0'
+        } finally { Remove-SandboxRepo $root }
+    }
+
+    It 'warns early on a self-produced inputs entry and a task-name collision without turning red' {
+        $root = New-SandboxRepo -WithBusiness
+        try {
+            $other = Join-Path $root 'business\flows\other.json'
+            Write-Text $other '{"name":"other","trigger":{"kind":"schedule","time":"09:00","gate":"none","task_name":"flow-ir-taken"},"variables":[],"nodes":[]}'
+            $flow = Join-Path $root 'business\flows\bad-inputs.json'
+            Write-Text $flow '{"name":"bad-inputs","trigger":{"kind":"schedule","time":"09:00","gate":"none","task_name":"flow-ir-taken"},"variables":[{"name":"OutDir","type":"string","default":"out"}],"nodes":[{"id":"n1","pad_hint":"File.ReadTextFromFile.ReadText","inputs":[{"dir":"{{variables.OutDir}}","pattern":"*.csv","required":true}],"params":{},"run_mode":"auto","idempotent":true,"reversible":true}]}'
+            $result = Invoke-Tier 'pregen' $root @('-FlowFile', $flow)
+            # advisory only: the tier stays green, the findings are named before generation
+            $result.Code | Should Be 0
+            $result.Text | Should Match 'inputs-self-produced: warn'
+            $result.Text | Should Match 'node n1 inputs\[0\]\.dir'
+            $result.Text | Should Match 'task-name-collision: warn'
+            $result.Text | Should Match 'flow-ir-taken'
+            $result.Text | Should Match 'checks=6, red=0'
         } finally { Remove-SandboxRepo $root }
     }
 

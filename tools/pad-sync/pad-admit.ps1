@@ -42,6 +42,7 @@ $ErrorActionPreference = 'Stop'
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 # Single implementation of the fingerprint mechanism: lookup, hashing, and comparison all live in PadFingerprint.psm1
 Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'PadFlowDeclarations.psm1') -Force
 # Severity when the fingerprint does not pass: warn only notifies, fail blocks.
 # The baseline has been seeded and verified, so the default is fail: any fingerprint mismatch blocks
 $script:FingerprintMode = 'fail'
@@ -261,12 +262,7 @@ $script:TriggerDayNames = @{
     mon = 'Mon'; tue = 'Tue'; wed = 'Wed'; thu = 'Thu'; fri = 'Fri'; sat = 'Sat'; sun = 'Sun'
 }
 
-# Property existence test: handles both the PSCustomObject produced by JSON and the Hashtable tests build directly
-function Test-PropExists($Obj, [string]$Name) {
-    if ($null -eq $Obj) { return $false }
-    if ($Obj -is [hashtable]) { return $Obj.ContainsKey($Name) }
-    return (@($Obj.PSObject.Properties.Name) -contains $Name)
-}
+# Property existence test lives in PadFlowDeclarations.psm1 (shared with tools\verify\check-flow-declarations.ps1)
 
 # Positive integer seconds: strings, fractions, 0, and negatives are all rejected so the registrar never has to guess units
 function Test-TriggerPositiveInt($Value) {
@@ -276,35 +272,7 @@ function Test-TriggerPositiveInt($Value) {
     return ($d -gt 0 -and $d -eq [math]::Floor($d))
 }
 
-# Default task name: the same rule as Get-ScheduleTaskName in pad-schedule, so the two derivations cannot drift apart
-function Get-TriggerTaskName([string]$FlowName) {
-    $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|\s]', '_').Trim('_')
-    if (-not $safe) { return $null }
-    return 'flow-ir-' + $safe
-}
-
-# Static task-name collision: scan the effective task names declared by other flows under business\flows; a hit means no overwrite
-function Find-TriggerTaskCollision {
-    param([string]$Repo, [string]$SelfFile, [string]$TaskName)
-    $hits = @()
-    if (-not $Repo -or -not $TaskName) { return $hits }
-    $dir = Join-Path $Repo 'business\flows'
-    if (-not (Test-Path -LiteralPath $dir)) { return $hits }
-    $self = $null
-    if ($SelfFile -and (Test-Path -LiteralPath $SelfFile)) { $self = (Resolve-Path -LiteralPath $SelfFile).Path }
-    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
-        if ($self -and $f.FullName -eq $self) { continue }
-        try { $j = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { continue }
-        if (-not (Test-PropExists $j 'trigger')) { continue }
-        $t = $null
-        if (Test-PropExists $j.trigger 'task_name') { $t = [string]$j.trigger.task_name }
-        elseif ((Test-PropExists $j.trigger 'kind') -and [string]$j.trigger.kind -ne 'manual') {
-            $t = Get-TriggerTaskName ([IO.Path]::GetFileNameWithoutExtension($f.Name))
-        }
-        if ($t -eq $TaskName) { $hits += $f.Name }
-    }
-    return $hits
-}
+# Task-name derivation and collision scanning live in PadFlowDeclarations.psm1 (shared with the pregen gate)
 
 # TRIGGER body: static validation + optional live validation.
 # -TriggerLive is off by default: it reads the local scheduled tasks and specHash without side effects;
@@ -670,25 +638,7 @@ function Invoke-TriggerCheck {
 # never opens, moves, or deletes anything.
 # The capability serves admission and structural checks only; it does not change the generated .robin (the generator does not know inputs).
 
-# Resolve the {{config.<KEY>}} of inputs.dir: read-only; fail hard when it cannot be resolved, never fall back to a literal path
-function Resolve-InputDir {
-    param([string]$Token, $Config, [string]$ConfigFile)
-    $m = [regex]::Match([string]$Token, '^\{\{config\.(\w+)\}\}$')
-    if (-not $m.Success) {
-        return @{ dir = $null; code = 'INPUT_PATH_LITERAL'
-            message = "inputs.dir must be a {{config.<KEY>}} reference, not a literal path: $Token" }
-    }
-    $key = $m.Groups[1].Value
-    if (-not $Config) {
-        return @{ dir = $null; code = 'INPUT_CONFIG_UNRESOLVED'
-            message = "no config provided; cannot resolve {{config.$key}}; specify it with -ConfigFile" }
-    }
-    if (-not (Test-PropExists $Config $key) -or -not [string]$Config.$key) {
-        return @{ dir = $null; code = 'INPUT_CONFIG_UNRESOLVED'
-            message = "config has no usable key $key ($ConfigFile)" }
-    }
-    return @{ dir = [string]$Config.$key; code = $null; message = $null }
-}
+# inputs.dir resolution and candidate enumeration live in PadFlowDeclarations.psm1 (shared with the pregen gate)
 
 # INPUT body: static shape + optional filesystem verification (read-only enumeration)
 function Invoke-InputCheck {
@@ -747,26 +697,25 @@ function Invoke-InputCheck {
             }
             $required = [bool]$it.required
 
-            # Filesystem verification: when the directory is missing or unreadable, a required entry fails while an optional one counts as "absent"
-            $dir = $res.dir
-            if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+            # Filesystem verification via the shared helper, so the pregen gate reads exactly the same facts
+            $probe = Get-InputCandidates -DirToken $dirToken -Pattern $pattern -Config $Config -ConfigFile $ConfigFile
+            $dir = $probe.dir
+            if (-not $probe.dirExists) {
                 if ($required) {
                     $issues += @{ status = 'fail'; code = 'INPUT_DIR_UNREADABLE'
                         message = "required input directory does not exist: $dir"; evidence = @("$at $dir\$pattern") }
                 }
                 continue
             }
-            try {
-                $cands = @(Get-ChildItem -LiteralPath $dir -Filter $pattern -File -ErrorAction Stop)
-            } catch {
+            if (-not $probe.readable) {
                 if ($required) {
                     $issues += @{ status = 'fail'; code = 'INPUT_DIR_UNREADABLE'
-                        message = "input directory is not readable: $dir ($($_.Exception.Message))"; evidence = @("$at") }
+                        message = "input directory is not readable: $dir ($($probe.error))"; evidence = @("$at") }
                 }
                 continue
             }
-            if ($cands.Count -ge 2) {
-                $names = @($cands | ForEach-Object { $_.Name }) -join ', '
+            if ($probe.count -ge 2) {
+                $names = @($probe.names) -join ', '
                 $issues += @{ status = 'fail'; code = 'INPUT_FILE_AMBIGUOUS'
                     message = "$at has $($cands.Count) candidates ($names); no 'take the latest' guessing; clean up the directory first"
                     evidence = @("$at $dir\$pattern", "candidate(s): $names") }

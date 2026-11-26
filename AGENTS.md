@@ -107,6 +107,10 @@ When everything passes, tell the user:
 
 > Open PAD → create a new flow → paste `out.robin` into the canvas with Ctrl+V → fill in the UI elements the
 > prompts ask for → run.
+>
+> After the first real run or publish in PAD (which creates a new published copy), re-run
+> `.\tools\pad-sync\pad-fingerprint.ps1 -FlowName <name> -Set -Confirm` so the fingerprint baseline points at
+> that new published copy; without it the next admission reports a fingerprint mismatch against the stale baseline.
 
 **Reading local Pester output**: `Invoke-Pester tests` may end with process exit code 1 even when the summary says
 `Failed: 0`, because some tests spawn child `powershell` processes that exit 1/2 by design and the leftover
@@ -172,7 +176,7 @@ written.
 
 | Tier | Command | Runs |
 |---|---|---|
-| Pre-generation | `.\tools\verify\run-gates.ps1 -Tier pregen -FlowFile <flow.json>` | decision ledger (`check-decisions.js --mode=fail`), path origin (`check-hardcoded-paths.ps1`), referenced targets (`check-referenced-paths.ps1`) |
+| Pre-generation | `.\tools\verify\run-gates.ps1 -Tier pregen -FlowFile <flow.json>` | decision ledger (`check-decisions.js --mode=fail`), node declaration completeness as a warn-only list (`eval-flow.js --warn`: names nodes missing `run_mode` / `idempotent` / `reversible`, never fails), path origin (`check-hardcoded-paths.ps1`), referenced targets (`check-referenced-paths.ps1`) |
 | Admission | `.\tools\verify\run-gates.ps1 -Tier admit -FlowFile <flow.json>` | the above, plus output-root registry (`check-output-roots.ps1`) and `pad-admit.ps1` (reversibility/ask, policy, fingerprint, preflight) |
 | Delivery | `.\tools\verify\run-gates.ps1 -Tier deliver -FlowFile <flow.json>` | hold-out set (`check-adversarial-set.ps1`), acceptance execution and report production (`run-test-report.ps1`), verdict (`check-test-report.ps1`) |
 

@@ -8,8 +8,12 @@
     re-implemented, relaxed or interpreted beyond pass/skip/red/blocked.
 
       pregen   decision ledger (check-decisions.js --mode=fail)
+               + node declaration completeness, warn-only (eval-flow.js --warn)
                + path origin (check-hardcoded-paths.ps1)
                + referenced-target existence (check-referenced-paths.ps1)
+                + early warn-only notices (shared checks from PadFlowDeclarations.psm1): inputs entries
+                  derived from {{variables.*}} (self-produced, not an external input) and non-manual
+                  task_name collisions
       admit    pregen
                + output-root registry (check-output-roots.ps1)
                + admission (pad-admit.ps1: reversibility/ask, policy, fingerprint, preflight)
@@ -127,6 +131,20 @@ function Invoke-PsGate {
     Invoke-GateCheck $Name 'powershell' $all
 }
 
+# Warn-only early notice: counted in the tier's checks total but never red/blocked, so the 0/1/2
+# exit semantics are unchanged. Used for problems pad-admit reports as fail only later (INPUT_FILE_MISSING,
+# TRIGGER_AMBIGUOUS): the same shared checks name them before anything is generated.
+function Invoke-EarlyWarn {
+    param([string]$Name, [string[]]$Details)
+    $script:Total++
+    if ($Details.Count -eq 0) {
+        Write-Output ("[run-gates] {0}: pass (no findings)" -f $Name)
+    } else {
+        foreach ($d in $Details) { Write-Output ("[run-gates] {0}: {1}" -f $Name, (ConvertTo-AsciiEscape $d)) }
+        Write-Output ("[run-gates] {0}: warn ({1} finding(s); advisory only, reported as fail at admission)" -f $Name, $Details.Count)
+    }
+}
+
 # Latest completed run of this flow in the manifest: the only defensible default window for acceptance
 # (run-test-report refuses to invent a six-hour window, and so does this tier).
 function Get-LatestRunSince {
@@ -153,6 +171,7 @@ function Get-LatestRunSince {
 }
 
 $decisionTool = Join-Path $RepoRoot 'tools\verify\check-decisions.js'
+$declarationTool = Join-Path $RepoRoot 'tools\pad-robin\eval-flow.js'
 $hardcodedTool = Join-Path $RepoRoot 'tools\verify\check-hardcoded-paths.ps1'
 $referencedTool = Join-Path $RepoRoot 'tools\verify\check-referenced-paths.ps1'
 $outputRootsTool = Join-Path $RepoRoot 'tools\publish\check-output-roots.ps1'
@@ -171,6 +190,9 @@ $flowInsideRepo = $FlowFile.StartsWith($repoBoundary, [StringComparison]::Ordina
 
 if ($Tier -eq 'pregen' -or $Tier -eq 'admit') {
     Invoke-GateCheck 'decisions' 'node' @($decisionTool, $FlowFile, '--mode=fail')
+    # Warn-only: eval-flow --warn lists nodes missing run_mode / idempotent / reversible and always exits 0,
+    # so an incomplete declaration is reported here but never turns the tier red or blocks generation.
+    Invoke-GateCheck 'declarations-warn' 'node' @($declarationTool, $FlowFile, '--warn')
     if ($flowInsideRepo) {
         Invoke-PsGate 'hardcoded-paths' $hardcodedTool @('-RepoRoot', $RepoRoot)
         Invoke-PsGate 'referenced-paths' $referencedTool @('-RepoRoot', $RepoRoot)
@@ -181,6 +203,43 @@ if ($Tier -eq 'pregen' -or $Tier -eq 'admit') {
             Write-Output ("[run-gates] {0}: skip (flow outside the repository)" -f $name)
         }
     }
+
+    # Early warn-only notices, reusing the same shared checks as pad-admit (PadFlowDeclarations.psm1), so the
+    # mistake is named before generation instead of only at admission:
+    #   inputs-self-produced — an inputs entry whose dir/pattern derives from {{variables.*}} declares a file
+    #     this flow itself produces; pad-admit would only fail later with INPUT_FILE_MISSING.
+    #   task-name-collision — a non-manual trigger whose task_name another flow already uses; pad-admit would
+    #     only fail later with TRIGGER_AMBIGUOUS. Needs the repo's flows dir, so it runs only for in-repo flows.
+    Import-Module (Join-Path $RepoRoot 'tools\pad-sync\PadFlowDeclarations.psm1') -Force
+    try {
+        $flowJson = Get-Content -LiteralPath $FlowFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        $flowJson = $null
+    }
+    $selfHits = @()
+    if ($flowJson) {
+        $selfHits = @(Find-SelfProducedInputDeclarations -Flow $flowJson | ForEach-Object {
+            "node $($_.node) inputs[$($_.index)].$($_.field)=$($_.value) derives from a flow variable; it is produced by this flow, not an external input"
+        })
+    }
+    Invoke-EarlyWarn 'inputs-self-produced' $selfHits
+
+    $collisionDetails = @()
+    if ($flowInsideRepo -and $flowJson -and (Test-PropExists $flowJson 'trigger')) {
+        $trg = $flowJson.trigger
+        $kind = if (Test-PropExists $trg 'kind') { [string]$trg.kind } else { '' }
+        if ($kind -and $kind -ne 'manual') {
+            $taskName = $null
+            if (Test-PropExists $trg 'task_name') { $taskName = [string]$trg.task_name }
+            if (-not $taskName) { $taskName = Get-TriggerTaskName $flowName }
+            if ($taskName) {
+                $collisionDetails = @(Find-TriggerTaskCollision -Repo $RepoRoot -SelfFile $FlowFile -TaskName $taskName | ForEach-Object {
+                    "task_name=$taskName is already used by another flow ($_)"
+                })
+            }
+        }
+    }
+    Invoke-EarlyWarn 'task-name-collision' $collisionDetails
 }
 
 if ($Tier -eq 'admit') {

@@ -92,3 +92,38 @@ Describe 'eval-flow declaration-only mode (no *.cases.json required)' {
         $r.text | Should Match '\[eval-flow\] passed 16 / 16 \(1 flow samples\)'
     }
 }
+
+Describe 'eval-flow --warn mode (advisory list, never fails)' {
+
+    It 'a complete flow: exit 0 and a no-missing line' {
+        $r = Invoke-EvalFlowCli @($script:ExampleFlow, '--warn')
+        $r.code | Should Be 0
+        $r.text | Should Match '\[eval-flow\]\[warn\] no missing declaration across 1 flow sample'
+    }
+
+    It 'a flow missing reversible: exit 0, and the node plus the field are listed' {
+        $dir = Join-Path $TestDrive ('eval-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $flow = New-FlowCopy -Dir $dir -RemoveReversible
+        $r = Invoke-EvalFlowCli @($flow, '--warn')
+        # the same flow exits 1 without --warn; warn mode must not turn a declaration gap into a failure
+        $r.code | Should Be 0
+        $r.text | Should Match 'node 1: reversible'
+        $r.text | Should Match 'warn-only, generation is not blocked'
+        $r.text | Should Not Match 'FAIL'
+    }
+
+    It 'every deliberately incomplete public fixture still exits 0' {
+        # three trigger fixtures omit reversible on purpose; warn mode names them and still exits 0
+        $r = Invoke-EvalFlowCli @((Join-Path $script:Repo 'tests\eval\fixtures'), '--warn')
+        $r.code | Should Be 0
+        $r.text | Should Match 'trigger-schedule-confirm\.json'
+        $r.text | Should Match 'warn-only, generation is not blocked'
+    }
+
+    It 'a *.cases.json target is skipped with exit 0 instead of being judged' {
+        $r = Invoke-EvalFlowCli @((Join-Path $script:Repo 'tests\eval\trigger.cases.json'), '--warn')
+        $r.code | Should Be 0
+        $r.text | Should Match 'skip: .* is a case file'
+    }
+}

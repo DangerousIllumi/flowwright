@@ -8,6 +8,10 @@
  *
  * In a case file, `flow` points at the flow.json under test; in directory mode each case file carries its own flow.
  * Exit codes: 0 all pass / 1 some failed / 2 input error
+ *
+ * --warn is the exception to those exit codes: it lists nodes missing run_mode / idempotent / reversible and
+ * always exits 0 (2 only when no target is given), so an advisory check can sit in a gate tier without
+ * blocking anything. run-gates.ps1 -Tier pregen uses it that way.
  */
 
 const fs = require("fs");
@@ -78,6 +82,20 @@ function reversibleProblems(n) {
     problems.push(`REVERSIBLE_MISLABELED: action ${n.pad_hint} is irreversible (${reason}); reversible must be false`);
   }
   return problems;
+}
+
+// Warn-only scan behind --warn: the same three must-answers declarationsComplete judges, returned as a
+// list instead of a verdict. Deliberately narrower — only a missing run_mode / idempotent / reversible is a
+// gap, so a note requirement or REVERSIBLE_MISLABELED (a wrong value, not a missing one) never appears here.
+function declarationGaps(flow) {
+  const nodes = Array.isArray(flow && flow.nodes) ? flow.nodes : [];
+  const gaps = [];
+  for (const n of nodes) {
+    if (!RUN_MODES.includes(n.run_mode)) gaps.push({ node: n.id, field: "run_mode", value: n.run_mode, expected: RUN_MODES.join("/") });
+    if (typeof n.idempotent !== "boolean") gaps.push({ node: n.id, field: "idempotent", value: n.idempotent, expected: "true/false" });
+    if (typeof n.reversible !== "boolean") gaps.push({ node: n.id, field: "reversible", value: n.reversible, expected: "true/false" });
+  }
+  return gaps;
 }
 
 /**
@@ -573,9 +591,10 @@ function loadCases(file) {
 if (require.main === module) {
   const args = process.argv.slice(2);
   const asJson = args.includes("--json");
+  const warnOnly = args.includes("--warn");
   const target = args.find((a) => !a.startsWith("--"));
   if (!target) {
-    console.error("Usage: node eval-flow.js <cases.json | flow.json | directory> [--json]");
+    console.error("Usage: node eval-flow.js <cases.json | flow.json | directory> [--json] [--warn]");
     process.exit(2);
   }
 
@@ -589,6 +608,63 @@ if (require.main === module) {
       return false;
     }
   };
+
+  // Warn-only mode (--warn): list nodes missing run_mode / idempotent / reversible, judge nothing, and never
+  // fail the caller. run-gates.ps1's pre-generation tier calls this so an incomplete declaration is visible
+  // without blocking generation. A target that is not a flow definition prints "skip:" and still exits 0.
+  if (warnOnly) {
+    let files = [];
+    try {
+      const st = fs.statSync(target);
+      if (st.isDirectory()) {
+        files = fs
+          .readdirSync(target)
+          .filter((x) => x.endsWith(".json") && !x.endsWith(".cases.json"))
+          .sort()
+          .map((x) => path.join(target, x))
+          .filter(isFlowDefinition);
+        if (files.length === 0) {
+          console.log(`skip: no flow definition (*.json with a nodes array) under ${target}`);
+          process.exit(0);
+        }
+      } else if (target.endsWith(".cases.json")) {
+        console.log(`skip: ${target} is a case file, not a flow definition (warn mode reads flow definitions only)`);
+        process.exit(0);
+      } else if (target.endsWith(".json") && isFlowDefinition(target)) {
+        files = [target];
+      } else {
+        console.log(`skip: not a flow definition (*.json with a nodes array): ${target}`);
+        process.exit(0);
+      }
+    } catch (e) {
+      console.log(`skip: cannot read ${target}: ${e.message}`);
+      process.exit(0);
+    }
+
+    let totalGaps = 0;
+    for (const file of files) {
+      let flow;
+      try {
+        flow = JSON.parse(fs.readFileSync(file, "utf8"));
+      } catch (e) {
+        console.log(`skip: cannot read ${file}: ${e.message}`);
+        continue;
+      }
+      const gaps = declarationGaps(flow);
+      totalGaps += gaps.length;
+      if (gaps.length === 0) continue;
+      console.log(`[eval-flow][warn] ${file}: ${gaps.length} missing declaration(s)`);
+      for (const g of gaps) {
+        console.log(`[eval-flow][warn]   node ${g.node}: ${g.field} (got ${JSON.stringify(g.value)}, expected ${g.expected})`);
+      }
+    }
+    if (totalGaps === 0) {
+      console.log(`[eval-flow][warn] no missing declaration across ${files.length} flow sample(s)`);
+    } else {
+      console.log(`[eval-flow][warn] ${totalGaps} missing declaration(s) across ${files.length} flow sample(s); warn-only, generation is not blocked`);
+    }
+    process.exit(0);
+  }
 
   // Two modes, chosen by the target:
   //   cases mode       = a *.cases.json file, or a directory holding at least one *.cases.json (unchanged:
