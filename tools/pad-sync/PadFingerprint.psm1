@@ -232,7 +232,9 @@ function Test-ScriptFingerprint {
     }
 
     $expected = $base.scripts
-    $expectedKeys = @($expected.PSObject.Properties.Name)
+    # An empty section yields $null from .Name; without the filter that becomes a one-element array holding $null,
+    # and a later lookup indexes with a null key ("Index operation failed; the array index evaluated to null")
+    $expectedKeys = @($expected.PSObject.Properties.Name | Where-Object { $_ })
     $keys = @($Paths)
     if ($keys.Count -eq 0) { $keys = $expectedKeys }
     $keys = @($keys | Where-Object { $_ } | ForEach-Object { ([string]$_).Replace('\', '/') })
@@ -240,7 +242,8 @@ function Test-ScriptFingerprint {
 
     # Check the external section item by item using the absolute-path keys from the baseline (ignoring -Paths to avoid mixing with repo-relative paths)
     $expectedExternal = $base.external
-    $extKeys = @($expectedExternal.PSObject.Properties.Name)
+    # Same null-key guard as above: a v3 baseline seeded with an empty external section must not crash admission
+    $extKeys = @($expectedExternal.PSObject.Properties.Name | Where-Object { $_ })
     $nowExt = Get-ExternalScriptFingerprintParts -Paths $extKeys
 
     $bad = @()

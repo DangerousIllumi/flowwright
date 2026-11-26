@@ -546,6 +546,25 @@ Describe 'PadFingerprint scripts section (v3)' {
         $r.code | Should Be 'OK'
     }
 
+    It 'external section present but empty -> completes without throwing (regression: null key crashed admission)' {
+        $work = New-Work
+        $paths = New-ScriptRepo $work
+        $base = Join-Path $work 'empty-external.json'
+        Write-FingerprintBaseline $base ([ordered]@{
+            version = 3; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
+            hashes = [ordered]@{ robin = 'x'; config = $null; acceptance = $null }
+            scripts = (Get-ScriptFingerprintParts -RepoRoot $work -Paths $paths.repo)
+            # An empty section deserializes to an empty PSCustomObject whose .Name is $null; indexing with that null
+            # key used to raise "Index operation failed; the array index evaluated to null"
+            external = @{}
+            seededAt = '2026-11-06T00:00:00Z'
+        })
+        { Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work } | Should Not Throw
+        $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
+        $r.status | Should Be 'pass'
+        $r.code | Should Be 'OK'
+    }
+
     It 'old baseline without a scripts section -> warn (not fail, backward compatible)' {
         $work = New-Work
         $paths = New-ScriptRepo $work
