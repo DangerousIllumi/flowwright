@@ -118,6 +118,76 @@ function Find-WorkspaceRobin([string]$WorkspaceRoot, [string]$FlowGuid, [string]
     return $null
 }
 
+# The newest appended run record for one flow: business\logs\<flow>\runs.jsonl (written by PadRunLog / pad-schedule).
+# Returns the parsed JSON object, or $null when the file or the record does not exist.
+function Read-LatestRunRecord([string]$LogRoot, [string]$FlowName) {
+    if (-not $LogRoot -or -not $FlowName) { return $null }
+    $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|]', '_').Trim()
+    $file = Join-Path (Join-Path $LogRoot $safe) 'runs.jsonl'
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    $last = $null
+    foreach ($line in [IO.File]::ReadAllLines($file, [Text.Encoding]::UTF8)) {
+        if (-not $line.Trim()) { continue }
+        try { $rec = $line | ConvertFrom-Json } catch { continue }
+        if ($rec) { $last = $rec }
+    }
+    return $last
+}
+
+# Locate one Workspace revision directory and prove it belongs to the given run window.
+# The candidate must be a unique script.robin under Workspace\<flowGuid>\<revision>; its mtime must fall inside
+# [SinceUtc - margin, UntilUtc + margin]. Zero matches, several matches and an out-of-window mtime are all refusals:
+# this never degrades to "take the newest copy".
+function Resolve-WorkspaceRevision {
+    param(
+        [string]$WorkspaceRoot,
+        [string]$Revision,
+        # Restrict the scan to one flow GUID when the caller knows it; otherwise every GUID directory is scanned
+        [string]$FlowGuid,
+        [datetime]$SinceUtc,
+        [datetime]$UntilUtc,
+        [int]$MarginMinutes = 10
+    )
+    $fail = {
+        param($code, $message, $evidence)
+        return [ordered]@{ ok = $false; code = $code; message = $message; path = $null
+            flowGuid = $null; revision = $null; mtime = $null; evidence = @($evidence) }
+    }
+    if (-not $WorkspaceRoot -or -not (Test-Path -LiteralPath $WorkspaceRoot)) {
+        return (& $fail 'FINGERPRINT_REVISION_NOT_FOUND' "Workspace root does not exist: $WorkspaceRoot" "workspaceRoot=$WorkspaceRoot")
+    }
+    $hits = New-Object System.Collections.ArrayList
+    foreach ($guidDir in @(Get-ChildItem -LiteralPath $WorkspaceRoot -Directory -ErrorAction SilentlyContinue)) {
+        if ($FlowGuid -and $guidDir.Name -ne $FlowGuid) { continue }
+        $revDirs = @(Get-ChildItem -LiteralPath $guidDir.FullName -Directory -ErrorAction SilentlyContinue |
+            Where-Object { -not $Revision -or $_.Name -eq $Revision })
+        foreach ($revDir in $revDirs) {
+            $robin = Join-Path $revDir.FullName 'script.robin'
+            if (-not (Test-Path -LiteralPath $robin -PathType Leaf)) { continue }
+            [void]$hits.Add([ordered]@{ flowGuid = $guidDir.Name; revision = $revDir.Name; path = $robin
+                mtime = (Get-Item -LiteralPath $robin).LastWriteTime.ToUniversalTime() })
+        }
+    }
+    $what = $(if ($Revision) { "revision $Revision" } else { 'any revision' })
+    if ($hits.Count -eq 0) {
+        return (& $fail 'FINGERPRINT_REVISION_NOT_FOUND' "no Workspace revision with script.robin matches $what" "workspaceRoot=$WorkspaceRoot")
+    }
+    if ($hits.Count -gt 1) {
+        $names = @($hits | ForEach-Object { "$($_.flowGuid)/$($_.revision)" }) -join ', '
+        return (& $fail 'FINGERPRINT_AMBIGUOUS' "$($hits.Count) Workspace revisions match $what; cannot determine which one belongs to this run: $names" "candidates=$names")
+    }
+    $hit = $hits[0]
+    $from = $SinceUtc.AddMinutes(-$MarginMinutes)
+    $to = $UntilUtc.AddMinutes($MarginMinutes)
+    if ($hit.mtime -lt $from -or $hit.mtime -gt $to) {
+        $ev = @("revision=$($hit.revision)", "mtime=$($hit.mtime.ToString('o'))", "window=$($from.ToString('o'))..$($to.ToString('o'))")
+        $why = "revision $($hit.revision) was written outside this run's window; refusing to bind it"
+        return (& $fail 'FINGERPRINT_REVISION_OUTSIDE_WINDOW' $why $ev)
+    }
+    return [ordered]@{ ok = $true; code = $null; message = $null; path = $hit.path
+        flowGuid = $hit.flowGuid; revision = $hit.revision; mtime = $hit.mtime; evidence = @() }
+}
+
 # Read the current environment ID from the PAD console config (the first EnvironmentId in console.config's UserConfigs)
 # Returns $null when unreadable: the baseline records null, and admission then skips the environment comparison instead of inventing an identity
 function Get-PadEnvironmentId([string]$ConsoleConfigPath) {
@@ -608,6 +678,7 @@ function Test-FlowFingerprint {
 }
 
 Export-ModuleMember -Function Get-FlowGuidFromLogPath, Find-LatestFlowRun, Find-WorkspaceRobin,
+    Read-LatestRunRecord, Resolve-WorkspaceRevision,
     Get-PadEnvironmentId, Get-FingerprintParts, Get-FingerprintBaselinePath,
     Get-RobinLogicHash, Get-WorkspaceRootFromScriptsRoot,
     Read-FingerprintScriptConfig,

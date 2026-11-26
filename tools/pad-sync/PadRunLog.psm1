@@ -34,7 +34,9 @@
 #                 needs-human-confirm / run / run-timeout / collect / acceptance / done). It is
 #                 deliberately NOT a cross-source enum: do not query it across sources, use status
 #   run_id        the identifier that lets a re-extraction deduplicate (PAD console runs)
-#   evidence      where the record came from (the RunDefinition.json that proved it)
+#   evidence      where the record came from: the RunDefinition.json that proved it (pad-console), or the
+#                 Workspace revision directory the run used (pad-schedule, so pad-fingerprint can bind a revision
+#                 on chains that write no RunDefinition.json)
 #
 # status mapping table. Losses are deliberate and are recorded in status_raw / stage, never silently
 # dropped:

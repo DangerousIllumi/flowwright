@@ -310,7 +310,8 @@ if (-not $NoMain) {
                 Write-RunRecord -Flow $FlowName -Source 'schedule' -StartedAt $runStarted.ToString('o') `
                     -FinishedAt ([DateTimeOffset]::Now.ToString('o')) -Rc $exitCode `
                     -StatusRaw $(if ($sync) { [string]$sync.status } else { $null }) `
-                    -Stage $(if ($sync) { [string]$sync.stage } else { $null }) | Out-Null
+                    -Stage $(if ($sync) { [string]$sync.stage } else { $null }) `
+                    -Evidence $(if ($sync) { [string]$sync.revisionDir } else { $null }) | Out-Null
             } catch {
                 Log "failed to write the run record: $($_.Exception.Message)"
             }

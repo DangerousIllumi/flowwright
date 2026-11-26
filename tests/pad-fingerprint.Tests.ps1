@@ -638,3 +638,82 @@ Describe 'PadFingerprint scripts section (v3)' {
     }
 }
 
+# A scheduled chain writes no RunDefinition.json: the revision is recorded in business\logs\<flow>\runs.jsonl (evidence)
+function New-FallbackFixture {
+    param([string]$Work, [datetime]$RobinTimeUtc, [string]$Evidence = 'REV00001', [string]$Revision = 'REV00001')
+    $repo = Join-Path $Work 'repo'
+    New-Item -ItemType Directory -Path (Join-Path $repo 'business\flows') -Force | Out-Null
+    $logDir = Join-Path $repo 'business\logs\Scheduled Flow'
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $repo 'business\flows\scheduled.robin'), "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
+    $scripts = Join-Path $Work 'Scripts'
+    New-Item -ItemType Directory -Path $scripts -Force | Out-Null
+    $guid = '33333333-3333-3333-3333-333333333333'
+    $revDir = Join-Path $Work "Workspace\$guid\$Revision"
+    New-Item -ItemType Directory -Path $revDir -Force | Out-Null
+    $robin = Join-Path $revDir 'script.robin'
+    [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
+    (Get-Item -LiteralPath $robin).LastWriteTime = $RobinTimeUtc.ToLocalTime()
+    $rec = [ordered]@{
+        flow = 'Scheduled Flow'; source = 'schedule'
+        started_at = '2026-11-25T09:00:00+08:00'; finished_at = '2026-11-25T09:05:00+08:00'
+        rc = 0; status = 'OK'; status_raw = 'Succeeded'; stage = 'done'; run_id = $null
+        evidence = $(if ($Evidence) { $Evidence } else { $null })
+    }
+    [IO.File]::WriteAllText((Join-Path $logDir 'runs.jsonl'),
+        (($rec | ConvertTo-Json -Compress) + "`n"), (New-Object Text.UTF8Encoding($false)))
+    return [ordered]@{ repo = $repo; scripts = $scripts; workspace = (Join-Path $Work 'Workspace'); robin = $robin; guid = $guid }
+}
+
+function Invoke-FingerprintCli {
+    param([string]$Repo, [string]$Scripts, [string]$Workspace, [hashtable]$Extra)
+    # Hashtable splatting, not an array: an array splat would pass the '-FlowName' string as a positional value
+    $cliArgs = @{ FlowName = 'Scheduled Flow'; RepoRoot = $Repo; ScriptsRoot = $Scripts
+        WorkspaceRoot = $Workspace; EnvironmentId = 'test' }
+    if ($Extra) { foreach ($k in $Extra.Keys) { $cliArgs[$k] = $Extra[$k] } }
+    $out = (& $script:Script @cliArgs 2>&1 | Out-String)
+    $line = @(($out -split "`r?`n") | Where-Object { $_ -like 'PAD_FINGERPRINT_RESULT=*' })
+    $json = $null
+    if ($line.Count -gt 0) {
+        try { $json = $line[-1].Substring('PAD_FINGERPRINT_RESULT='.Length) | ConvertFrom-Json } catch { }
+    }
+    return [ordered]@{ exit = $LASTEXITCODE; result = $json; text = $out }
+}
+
+Describe 'PadFingerprint revision fallback (no RunDefinition.json)' {
+
+    # Run window in the record is 2026-11-25T09:00..09:05 +08:00 (01:00..01:05 UTC) with a 10 minute margin
+    It 'run record evidence + mtime inside the window -> binds that revision' {
+        $fake = New-FallbackFixture -Work (New-Work) -RobinTimeUtc ([datetime]::SpecifyKind([datetime]'2026-11-25T01:03:00', 'Utc'))
+        $r = Invoke-FingerprintCli $fake.repo $fake.scripts $fake.workspace $null
+        $r.exit | Should Be 0
+        $r.result.code | Should Be 'OK'
+        ($r.result.revisionDir -split '\\')[-1] | Should Be 'REV00001'
+        $r.result.flowGuid | Should Be '33333333-3333-3333-3333-333333333333'
+    }
+
+    It 'mtime outside the window -> refused, nothing bound' {
+        $fake = New-FallbackFixture -Work (New-Work) -RobinTimeUtc ([datetime]::SpecifyKind([datetime]'2026-11-20T01:03:00', 'Utc'))
+        $r = Invoke-FingerprintCli $fake.repo $fake.scripts $fake.workspace $null
+        $r.exit | Should Be 1
+        $r.result.code | Should Be 'FINGERPRINT_REVISION_OUTSIDE_WINDOW'
+        $r.result.revisionDir | Should Be $null
+    }
+
+    It 'explicit -RevisionDir with an in-window mtime -> accepted' {
+        $fake = New-FallbackFixture -Work (New-Work) -RobinTimeUtc ([datetime]::SpecifyKind([datetime]'2026-11-25T01:04:00', 'Utc')) -Evidence ''
+        $r = Invoke-FingerprintCli $fake.repo $fake.scripts $fake.workspace @{ RevisionDir = 'REV00001' }
+        $r.exit | Should Be 0
+        $r.result.code | Should Be 'OK'
+        ($r.result.revisionDir -split '\\')[-1] | Should Be 'REV00001'
+    }
+
+    It 'explicit -RevisionDir with an out-of-window mtime -> refused' {
+        $fake = New-FallbackFixture -Work (New-Work) -RobinTimeUtc ([datetime]::SpecifyKind([datetime]'2026-11-20T01:04:00', 'Utc')) -Evidence ''
+        $r = Invoke-FingerprintCli $fake.repo $fake.scripts $fake.workspace @{ RevisionDir = 'REV00001' }
+        $r.exit | Should Be 1
+        $r.result.code | Should Be 'FINGERPRINT_REVISION_OUTSIDE_WINDOW'
+        $r.result.revisionDir | Should Be $null
+    }
+}
+

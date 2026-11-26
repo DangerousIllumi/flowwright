@@ -8,6 +8,8 @@
 # Hard constraints:
 #   1) The location is pinned to the revision (the revision directory name is this run's runId); never "take the latest one".
 #      Multiple matching candidates are reported as AMBIGUOUS and the script stops; it never picks one automatically.
+#      When the run wrote no RunDefinition.json (pad-schedule → pad-sync), the revision comes from that flow's latest
+#      run record (evidence) or from -RevisionDir, and the mtime window of that run must still hold.
 #   2) -Set only prints the location result and the three hashes; -Confirm is required to write, and -DryRun never writes.
 #      Writing a baseline silently without human confirmation is forbidden.
 #   3) The baseline lives in business\fingerprints\<flow name>.json (business layer, not committed).
@@ -27,6 +29,9 @@ param(
     [string]$ScriptsRoot,
     [string]$WorkspaceRoot,
     [string]$ConsoleConfigPath,
+    # Explicit Workspace revision directory name; only used when no RunDefinition.json exists, and it must still pass
+    # the mtime window of the latest run record for this flow (a name alone never proves it belongs to that run)
+    [string]$RevisionDir,
     [string]$ConfigFile,
     [string]$AcceptanceFile,
     [string]$BaselinePath,
@@ -109,21 +114,54 @@ try {
     # ── Locate: the flow identity comes from the local run history, the definition copy is pinned to this runId ──
     $run = Find-LatestFlowRun $ScriptsRoot $FlowName
     if (-not $run) {
-        $result.code = 'FINGERPRINT_UNKNOWN'
-        throw "flow $FlowName not found in the local run history; cannot locate the revision (run the flow once first)"
+        # Fallback for chains that write no RunDefinition.json (pad-schedule → pad-sync): the run record carries the
+        # revision directory name in evidence. -RevisionDir may state it by hand. Either way the mtime window of that
+        # run stays mandatory, so a stale or unrelated revision is still refused rather than bound.
+        $logRoot = Join-Path $RepoRoot 'business\logs'
+        $rec = Read-LatestRunRecord $logRoot $FlowName
+        $revName = $RevisionDir
+        if (-not $revName -and $rec) { $revName = [string]$rec.evidence }
+        if (-not $revName) {
+            $result.code = 'FINGERPRINT_UNKNOWN'
+            throw "flow $FlowName not found in the local run history and no revision was recorded (run the flow once first, or pass -RevisionDir)"
+        }
+        if (-not $rec -or -not $rec.started_at -or -not $rec.finished_at) {
+            $result.code = 'FINGERPRINT_REVISION_UNVERIFIED'
+            throw "revision $revName cannot be verified: no run record with started_at/finished_at for flow $FlowName"
+        }
+        $since = [datetime]::Parse([string]$rec.started_at).ToUniversalTime()
+        $until = [datetime]::Parse([string]$rec.finished_at).ToUniversalTime()
+        # An existing baseline already knows the flow GUID: use it to narrow the scan instead of guessing between flows
+        $guidHint = $null
+        $pre = Read-FingerprintBaseline $BaselinePath
+        if ($pre.ok -and $pre.data.flowGuid) { $guidHint = [string]$pre.data.flowGuid }
+        $rev = Resolve-WorkspaceRevision -WorkspaceRoot $WorkspaceRoot -Revision $revName -FlowGuid $guidHint `
+            -SinceUtc $since -UntilUtc $until
+        if (-not $rev.ok) {
+            $result.code = $rev.code
+            throw ("$($rev.message) ($($rev.evidence -join '; '))")
+        }
+        $result.flowGuid = $rev.flowGuid
+        $result.runId = $null
+        $result.revisionDir = (Split-Path -Parent $rev.path)
+        $result.workspaceRobin = $rev.path
+        $result.workspaceMtime = (Get-Item -LiteralPath $rev.path).LastWriteTime.ToString('o')
+        Log "no RunDefinition.json: bound revision from the run record (revision=$($rev.revision), flowGuid=$($rev.flowGuid))"
+    } else {
+        $ids = Get-FlowGuidFromLogPath ([string]$run.path)
+        $result.flowGuid = [string]$run.flowGuid
+        $result.runId = $(if ($ids) { [string]$ids.runId } else { $null })
+        $since = [datetime]::Parse([string]$run.startTime).ToUniversalTime()
+        $wsRobin = Find-WorkspaceRobin $WorkspaceRoot $result.flowGuid $result.runId $since
+        if (-not $wsRobin) {
+            $result.code = 'FINGERPRINT_UNKNOWN'
+            throw "no published definition for this run (runId=$($result.runId)) in Workspace (flowGuid=$($result.flowGuid)); will not fall back to the latest one"
+        }
+        $result.workspaceRobin = $wsRobin
+        $result.revisionDir = Split-Path -Parent $wsRobin
+        $result.workspaceMtime = (Get-Item -LiteralPath $wsRobin).LastWriteTime.ToString('o')
     }
-    $ids = Get-FlowGuidFromLogPath ([string]$run.path)
-    $result.flowGuid = [string]$run.flowGuid
-    $result.runId = $(if ($ids) { [string]$ids.runId } else { $null })
-    $since = [datetime]::Parse([string]$run.startTime).ToUniversalTime()
-    $wsRobin = Find-WorkspaceRobin $WorkspaceRoot $result.flowGuid $result.runId $since
-    if (-not $wsRobin) {
-        $result.code = 'FINGERPRINT_UNKNOWN'
-        throw "no published definition for this run (runId=$($result.runId)) in Workspace (flowGuid=$($result.flowGuid)); will not fall back to the latest one"
-    }
-    $result.workspaceRobin = $wsRobin
-    $result.revisionDir = Split-Path -Parent $wsRobin
-    $result.workspaceMtime = (Get-Item -LiteralPath $wsRobin).LastWriteTime.ToString('o')
+    $wsRobin = $result.workspaceRobin
     $result.environmentId = $(if ($EnvironmentId) { $EnvironmentId } else { Get-PadEnvironmentId $ConsoleConfigPath })
 
     # The source .robin is the flow artifact; when it is missing, fall back to the published copy (stated explicitly in the log)

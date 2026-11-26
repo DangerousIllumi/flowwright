@@ -108,6 +108,7 @@ if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
 # Single implementation of designer interaction + telemetry parsing
 # -DisableNameChecking: the module has non-standard verbs such as Focus-/Click-; suppressing the warning keeps the output the agent parses clean
 Import-Module (Join-Path $PSScriptRoot 'PadDesigner.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PadAcceptance.psm1') -Force
@@ -130,7 +131,7 @@ if (-not $ManifestPath -and -not $NoManifest) {
 $script:Result = [ordered]@{
     ok = $false; stage = 'init'; flow = $FlowName; runId = $null
     status = $null; actions = $null; failedAction = $null; error = $null; logPath = $null
-    canvasVerified = $null; warnings = @(); lockWaitSec = 0
+    canvasVerified = $null; warnings = @(); lockWaitSec = 0; revisionDir = $null
     # Set to true when a non-interactive run stops at a manual-confirmation dialog; ok stays $null (unknown ≠ failure)
     needsHumanConfirm = $false; dialogTitle = $null; evidence = $null
     # Trigger-class failures: the URL was called but the flow never started / the flow name does not resolve to a flowId; used by the scheduler for graded alerts
@@ -532,6 +533,20 @@ try {
                     if (-not $script:Result.evidence) { $script:Result.evidence = 'unknown' }
                 }
             }
+        }
+
+        # The revision this run actually used: the Workspace cache directory PAD refreshed inside the run window.
+        # A unique match is required; zero or several matches stay null with a warning — this never guesses one.
+        $wsRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Workspace'
+        $runIds = if ($script:Result.logPath) { Get-FlowGuidFromLogPath ([string]$script:Result.logPath) } else { $null }
+        $runGuid = if ($runIds) { [string]$runIds.flowGuid } else { $null }
+        $rev = Resolve-WorkspaceRevision -WorkspaceRoot $wsRoot -FlowGuid $runGuid -SinceUtc $runStart.ToUniversalTime() -UntilUtc ([datetime]::UtcNow)
+        if ($rev.ok) {
+            $script:Result.revisionDir = $rev.revision
+            Write-Log "revision used by this run: $($rev.revision) ($($rev.flowGuid))"
+        } else {
+            $script:Result.warnings += "revision not recorded: $($rev.message)"
+            Write-Log "revision not recorded: $($rev.message)"
         }
 
         # V-model G6: a successful run does not mean the business result is correct; check the artifacts against the criteria
