@@ -226,7 +226,7 @@ Describe 'file watch and ledger' {
         Set-Content -LiteralPath $file -Value 'abc'
         $state = Join-Path $TestDrive 'state-ledger'
         New-Item -ItemType Directory -Path $state -Force | Out-Null
-        $ledger = Join-Path $state 'flow-ir-PESTER_FILE_TRIGGER.json'
+        $ledger = Join-Path $state 'PESTER_FILE_TRIGGER.json'
         $info = Get-Item -LiteralPath $file
         $key = & $script:FileModule { param($F) Get-TriggerFileKey $F } $info
         $parts = $key -split '\|'

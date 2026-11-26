@@ -133,16 +133,16 @@ Describe 'Gate tiers' {
         $root = New-SandboxRepo -WithBusiness
         try {
             $other = Join-Path $root 'business\flows\other.json'
-            Write-Text $other '{"name":"other","trigger":{"kind":"schedule","time":"09:00","gate":"none","task_name":"flow-ir-taken"},"variables":[],"nodes":[]}'
+            Write-Text $other '{"name":"other","trigger":{"kind":"schedule","time":"09:00","gate":"none","task_name":"taken"},"variables":[],"nodes":[]}'
             $flow = Join-Path $root 'business\flows\bad-inputs.json'
-            Write-Text $flow '{"name":"bad-inputs","trigger":{"kind":"schedule","time":"09:00","gate":"none","task_name":"flow-ir-taken"},"variables":[{"name":"OutDir","type":"string","default":"out"}],"nodes":[{"id":"n1","pad_hint":"File.ReadTextFromFile.ReadText","inputs":[{"dir":"{{variables.OutDir}}","pattern":"*.csv","required":true}],"params":{},"run_mode":"auto","idempotent":true,"reversible":true}]}'
+            Write-Text $flow '{"name":"bad-inputs","trigger":{"kind":"schedule","time":"09:00","gate":"none","task_name":"taken"},"variables":[{"name":"OutDir","type":"string","default":"out"}],"nodes":[{"id":"n1","pad_hint":"File.ReadTextFromFile.ReadText","inputs":[{"dir":"{{variables.OutDir}}","pattern":"*.csv","required":true}],"params":{},"run_mode":"auto","idempotent":true,"reversible":true}]}'
             $result = Invoke-Tier 'pregen' $root @('-FlowFile', $flow)
             # advisory only: the tier stays green, the findings are named before generation
             $result.Code | Should Be 0
             $result.Text | Should Match 'inputs-self-produced: warn'
             $result.Text | Should Match 'node n1 inputs\[0\]\.dir'
             $result.Text | Should Match 'task-name-collision: warn'
-            $result.Text | Should Match 'flow-ir-taken'
+            $result.Text | Should Match 'taken'
             $result.Text | Should Match 'checks=6, red=0'
         } finally { Remove-SandboxRepo $root }
     }

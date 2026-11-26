@@ -5,10 +5,14 @@
 #   and can only guess from PID/heartbeat; a wrong guess means waiting forever. A named mutex is maintained by the OS
 #   and released the moment the process ends, so a stale lock simply cannot exist.
 #
-# The lock file (%LOCALAPPDATA%\flow-ir\pad-run.lock.json) is only for observability:
+# The lock file (%LOCALAPPDATA%\flowwright\pad-run.lock.json) is only for observability:
 #   it is written once when the lock is acquired, recording the owning flow, PID, process start time, and start time,
 #   so a waiter can print "who is occupying PAD". It is not part of the mutual-exclusion decision and carries no heartbeat;
 #   deleting it does not affect correctness.
+
+# The state directory is defined once in PadState.psm1 (including the one-time migration from the old
+# "flow-ir" directory); this module only asks for the path, it never spells out the directory name.
+Import-Module (Join-Path $PSScriptRoot 'PadState.psm1') -Force
 
 $script:Mutex = $null
 $script:LockPath = $null
@@ -17,7 +21,7 @@ $script:WaitedSec = 0
 $script:StartedAt = $null
 
 function Get-PadLockFile {
-    $dir = Join-Path $env:LOCALAPPDATA 'flow-ir'
+    $dir = Get-PadStateDir
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     return (Join-Path $dir 'pad-run.lock.json')
 }

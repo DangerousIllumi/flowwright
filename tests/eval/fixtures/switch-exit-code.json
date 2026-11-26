@@ -3,7 +3,7 @@
   "description": "Run a script and branch three ways on its exit code (synthetic sample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-switch-exit-code",
+    "task_name": "sample-switch-exit-code",
     "time": "09:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"

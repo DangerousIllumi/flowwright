@@ -3,7 +3,7 @@
   "description": "Bounded loop that exits early when the condition is met (synthetic sample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-loop-with-break",
+    "task_name": "sample-loop-with-break",
     "time": "08:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"

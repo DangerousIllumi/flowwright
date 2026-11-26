@@ -13,7 +13,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 $flow = Join-Path $PSScriptRoot 'smoke-flow.json'
 $kb = Join-Path $PSScriptRoot 'smoke-kb.json'
 $cases = Join-Path $PSScriptRoot 'smoke.cases.json'
-$work = Join-Path ([IO.Path]::GetTempPath()) ('flow-ir-smoke-' + [guid]::NewGuid().ToString('N'))
+$work = Join-Path ([IO.Path]::GetTempPath()) ('flowwright-smoke-' + [guid]::NewGuid().ToString('N'))
 $failed = $false
 
 function Invoke-Step {

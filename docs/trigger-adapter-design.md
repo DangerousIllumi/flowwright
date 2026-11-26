@@ -29,7 +29,7 @@ and does not describe process steps. Registration is an **operating-system-level
 ```json
 "trigger": {
   "kind": "schedule",
-  "task_name": "flow-ir-<scheduled task name>",
+  "task_name": "<scheduled task name>",
   "time": "09:00",
   "days": ["mon", "tue", "wed", "thu", "fri"],
   "gate": "workday",
@@ -41,7 +41,7 @@ and does not describe process steps. Registration is an **operating-system-level
 | Field | Required | Value domain / default | Description |
 |---|---|---|---|
 | `kind` | Yes | `manual` / `schedule` / `file` | Lowercase; any other value is rejected, never guessed |
-| `task_name` | No | Derived from the flow name by default: `flow-ir-` plus illegal characters replaced with `_` | When given explicitly it must match `^[A-Za-z0-9._-]{1,64}$` and be globally unique |
+| `task_name` | No | Derived from the flow name by default: the flow name itself, with illegal characters replaced with `_` | When given explicitly it must match `^[A-Za-z0-9._-]{1,64}$` and be globally unique |
 | `time` | Required for `schedule`/`file` | `HH:mm` (24-hour) | `schedule`: the firing time; `file`: the time watching starts |
 | `days` | No | Default `mon`–`fri`; values `mon..sun` | No holiday inference; holidays are left to `gate` |
 | `gate` | No | `none` / `workday` / `last-workday`, default `none` | `workday`/`last-workday` reuse the existing workday calendar; an unavailable calendar is a hard failure, never a guess |
@@ -86,7 +86,7 @@ finishes). There is no silent mapping — `type: "event"` and `config.dayOfMonth
   "name": "<flow name>",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-<scheduled task name>",
+    "task_name": "<scheduled task name>",
     "time": "09:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday",
@@ -102,7 +102,7 @@ finishes). There is no silent mapping — `type: "event"` and `config.dayOfMonth
 **Example A — unsupported kind**
 
 ```json
-"trigger": { "kind": "mail", "task_name": "flow-ir-<scheduled task name>" }
+"trigger": { "kind": "mail", "task_name": "<scheduled task name>" }
 ```
 
 Violation: the `kind` domain is `manual/schedule/file` only. Reported as `TRIGGER_KIND_UNSUPPORTED` (fail).
@@ -146,7 +146,7 @@ default time" is exactly the kind of invisible verbal agreement this design remo
 |---|---|
 | Input | `flow.json` (including `trigger`) + `-ConfigFile` (resolves `{{config.*}}` and the timeout default) + `-AllowProd` |
 | Generated action | Reuse the action construction already in `pad-schedule.ps1` (`run-hidden.vbs` wrapping `powershell`, `-LogonType Interactive`, `-MultipleInstances IgnoreNew`); no new launch mechanism |
-| Idempotency key | `task_name` plus the SHA256 of the canonical JSON (`specHash`); written into the task description prefix `flow-ir-spec:<specHash>` |
+| Idempotency key | `task_name` plus the SHA256 of the canonical JSON (`specHash`); written into the task description prefix `flowwright-spec:<specHash>` |
 | Re-registration | Task exists and `specHash` matches → return `unchanged` without writing to the system; otherwise `Register-ScheduledTask -Force`, then read back and verify |
 | Verify in effect | ① `Get-ScheduledTask` finds it; ② the `specHash` read back from the description matches; ③ the action parameters contain the correct `-FlowName`; ④ `Get-ScheduledTaskInfo.NextRunTime` is non-empty and later than now; ⑤ `LastTaskResult` plays no part in "did registration take effect" (it describes a run outcome) |
 | Catch-up | `StartWhenAvailable` is **explicitly set to `False`**: triggers missed while the machine slept or was off are not caught up after resume. The trade-off is "if the machine is off at 9:00, it does not run that day" — the calendar gate only decides whether today is a workday and cannot recognize that a catch-up instance belongs to a missed weekend trigger, which would otherwise run unplanned early on a workday morning |
@@ -310,7 +310,7 @@ validation changes (`eval-flow.js`, `pad-admit.ps1`). The watching logic is fold
 |---|---|---|
 | 1 Declaration layer | Standardize `trigger` + two new ops in `eval-flow.js` + positive/negative cases | `node tools\pad-robin\eval-flow.js tests\eval` exits 0; negative cases use `expect=invalid` + `code` assertions that must hit `TRIGGER_*` (the suite stays green); turning a negative case into "expected valid" makes it exit 1 and print the result code |
 | 2 Admission layer | The `TRIGGER` check in `pad-admit`, warn by default | `.\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<flow name>.json -Json` output contains `"id":"TRIGGER"`; an existing flow without `trigger` warns and the exit code is unchanged; a `kind=mail` sample exits 1 |
-| 3 Scheduled task registrar | `TriggerRegistry.psm1` + `pad-trigger.ps1` (schedule) | `-Register -DryRun` only prints the action and writes nothing to the system; after a real registration to `flow-ir-<scheduled task name>-selftest`, `-Test` returns `ok=true`; `schtasks /Query /TN <scheduled task name> /XML` shows the time/weekdays matching the declaration; registering again returns `unchanged`; after `-Unregister`, `-Test` reports it is no longer registered |
+| 3 Scheduled task registrar | `TriggerRegistry.psm1` + `pad-trigger.ps1` (schedule) | `-Register -DryRun` only prints the action and writes nothing to the system; after a real registration to `<scheduled task name>-selftest`, `-Test` returns `ok=true`; `schtasks /Query /TN <scheduled task name> /XML` shows the time/weekdays matching the declaration; registering again returns `unchanged`; after `-Unregister`, `-Test` reports it is no longer registered |
 | 4 File arrival registrar | `file` branch + `-Watch` + state ledger | Register against a temporary `<attachment directory>`; drop in a probe file with a stable size → a new runId appears; drop in another file with the same name and size → it does not trigger again; `-Test` is read-only throughout (the directory mtime is unchanged) |
 
 At the end of every step, run `node tools\pad-robin\check.js <out.robin>` and `pad-admit` once to confirm that no
@@ -322,7 +322,7 @@ existing check turned red.
 
 | # | Item to verify | How to verify | Uncertainty |
 |---|---|---|---|
-| 1 | Is the scheduled-task description long enough for `flow-ir-spec:<hash>` | Read the full description back with `schtasks /Query /XML` after registering | The Task Scheduler description limit and truncation behaviour |
+| 1 | Is the scheduled-task description long enough for `flowwright-spec:<hash>` | Read the full description back with `schtasks /Query /XML` after registering | The Task Scheduler description limit and truncation behaviour |
 | 2 | Does a failed `Register-ScheduledTask -Force` keep the old task | Register deliberately with illegal action parameters and compare the task XML before and after | Whether a failure is atomic |
 | 3 | What `Get-ScheduledTaskInfo.NextRunTime` means for a "workdays only" task | Observe `NextRunTime` on two consecutive days after registering | How the `-Weekly` and `-Daily+gate` forms differ in display |
 | 4 | Can file watching start the flow while the PAD console is closed | Close the console, drop in a probe file, and observe how `pad-sync` classifies `trigger-failed` | Whether the protocol handler needs a resident console |

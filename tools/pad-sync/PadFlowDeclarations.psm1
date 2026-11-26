@@ -7,11 +7,36 @@ function Test-PropExists($Obj, [string]$Name) {
     return (@($Obj.PSObject.Properties.Name) -contains $Name)
 }
 
-# Default task name: the same rule as Get-ScheduleTaskName in pad-schedule, so the two derivations cannot drift apart
-function Get-TriggerTaskName([string]$FlowName) {
+# Task name core: the flow name with the characters that are invalid in a task name replaced by underscores.
+# The task name is the flow name itself — there is no prefix any more.
+# The legacy "flow-ir-" prefix is kept only as a lookup fallback: a task registered before the rename keeps
+# firing under its old name, so every lookup must still be able to find it (see Get-TriggerTaskNameCandidates).
+function ConvertTo-TaskNameCore([string]$FlowName) {
     $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|\s]', '_').Trim('_')
     if (-not $safe) { return $null }
+    return $safe
+}
+
+# Default task name: the flow name itself. Same rule as Get-ScheduleTaskName in pad-schedule,
+# so the two derivations cannot drift apart.
+function Get-TriggerTaskName([string]$FlowName) {
+    return (ConvertTo-TaskNameCore $FlowName)
+}
+
+# The name a task was registered under before the prefix was dropped: the same core plus "flow-ir-".
+function Get-LegacyTriggerTaskName([string]$FlowName) {
+    $safe = ConvertTo-TaskNameCore $FlowName
+    if (-not $safe) { return $null }
     return 'flow-ir-' + $safe
+}
+
+# Every name a task on this machine may carry: the current name first, then the legacy name.
+# Without the legacy fallback a task registered under the old name becomes an orphan: it keeps
+# triggering, but nothing can query or unregister it any more.
+function Get-TriggerTaskNameCandidates([string]$FlowName) {
+    $safe = ConvertTo-TaskNameCore $FlowName
+    if (-not $safe) { return @() }
+    return @($safe, ('flow-ir-' + $safe))
 }
 
 # Static task-name collision: scan the effective task names declared by other flows under business\flows; a hit means no overwrite
@@ -109,4 +134,4 @@ function Find-SelfProducedInputDeclarations {
     return $hits
 }
 
-Export-ModuleMember -Function Test-PropExists, Get-TriggerTaskName, Find-TriggerTaskCollision, Resolve-InputDir, Get-InputCandidates, Find-SelfProducedInputDeclarations
+Export-ModuleMember -Function Test-PropExists, ConvertTo-TaskNameCore, Get-TriggerTaskName, Get-LegacyTriggerTaskName, Get-TriggerTaskNameCandidates, Find-TriggerTaskCollision, Resolve-InputDir, Get-InputCandidates, Find-SelfProducedInputDeclarations

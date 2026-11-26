@@ -3,7 +3,7 @@
   "description": "For trigger assertion: schedule trigger plus one node whose effect cannot be reverted (reversibility counterexample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-trigger-fixture",
+    "task_name": "trigger-fixture",
     "time": "09:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday",

@@ -3,7 +3,7 @@
   "description": "Sample reconciliation: read attachments from the mailbox, extract amounts, compare them with the exported data, highlight differences in red, then email the recipient",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-monthly-reconciliation",
+    "task_name": "monthly-reconciliation",
     "time": "09:00",
     "gate": "last-workday",
     "timeout_sec": 4200

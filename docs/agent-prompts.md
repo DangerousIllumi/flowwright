@@ -85,7 +85,7 @@ Follow this structure strictly:
 {
   "name": "flow name (English kebab-case)",
   "description": "flow description (Chinese)",
-  "trigger": { "kind": "schedule", "task_name": "flow-ir-<task-name>", "time": "09:00",
+  "trigger": { "kind": "schedule", "task_name": "<task-name>", "time": "09:00",
                "days": ["mon", "tue", "wed", "thu", "fri"], "gate": "workday", "timeout_sec": 4200 },
   "variables": [
     { "name": "variable name", "type": "string | number | boolean | list | datatable",

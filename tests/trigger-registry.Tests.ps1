@@ -8,7 +8,7 @@ Import-Module (Join-Path $PSScriptRoot '..\tools\pad-sync\TriggerRegistry.psm1')
 $script:TriggerModule = Get-Module TriggerRegistry
 $script:TriggerCli = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-trigger.ps1'
 # Only used to assert that a task is absent; deliberately carries a do-not-register prefix
-$script:UniqueTask = 'flow-ir-trigger-pester-do-not-register'
+$script:UniqueTask = 'trigger-pester-do-not-register'
 
 # Writes a minimal flow; the trigger is the supplied declaration and the node list holds a single placeholder
 function New-TestFlow {
@@ -87,11 +87,27 @@ Describe 'TriggerRegistry declaration parsing' {
         $spec.taskName | Should Be $script:UniqueTask
     }
 
-    It 'schedule without task_name: derived as flow-ir-<flow name>' {
+    It 'schedule without task_name: derived as the flow name itself' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'PESTER_DERIVE' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
-        $spec.taskName | Should Be 'flow-ir-PESTER_TRIGGER'
+        $spec.taskName | Should Be 'PESTER_TRIGGER'
+    }
+
+    It 'the derived task name also carries the legacy name, so an old task stays reachable' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'PESTER_LEGACY' -Trigger $t
+        $spec = Get-TriggerSpec -FlowFile $f
+        $spec.taskName | Should Be 'PESTER_TRIGGER'
+        $spec.legacyTaskName | Should Be 'flow-ir-PESTER_TRIGGER'
+    }
+
+    It 'an explicitly declared task_name has no legacy twin' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; task_name = 'explicit-name' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'PESTER_EXPLICIT' -Trigger $t
+        $spec = Get-TriggerSpec -FlowFile $f
+        $spec.taskName | Should Be 'explicit-name'
+        $spec.legacyTaskName | Should Be $null
     }
 
     It 'manual declaration: no task name produced and all defaults present' {
@@ -233,13 +249,24 @@ Describe 'TriggerRegistry fingerprint and idempotency' {
         $got = & $script:TriggerModule {
             param($desc)
             Get-TaskSpecHash $desc
-        } ("flow-ir-spec:$hash；flow-ir：说明")
+        } ("flowwright-spec:$hash；flowwright：说明")
         $got | Should Be $hash
         $empty = & $script:TriggerModule {
             param($desc)
             Get-TaskSpecHash $desc
         } ('没有 spec 前缀')
         ($null -eq $empty) | Should Be $true
+    }
+
+    It 'The legacy description anchor is still read, so a task registered before the rename is not drift' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'desc-legacy' -Trigger $t
+        $hash = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f)
+        $got = & $script:TriggerModule {
+            param($desc)
+            Get-TaskSpecHash $desc
+        } ("flow-ir-spec:$hash；flow-ir：说明")
+        $got | Should Be $hash
     }
 
     It 'Action construction reuses pad-schedule: gate=workday goes through run-hidden.vbs + -RunIfWorkday' {
@@ -280,7 +307,7 @@ Describe 'TriggerRegistry fingerprint and idempotency' {
         $hash = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f)
         $actionSpec = [ordered]@{ exe = 'wscript.exe'; args = 'a b c' }
         $task = [pscustomobject]@{
-            Description = "flow-ir-spec:$hash；flow-ir：说明"
+            Description = "flowwright-spec:$hash；flowwright：说明"
             Actions     = @([pscustomobject]@{ Execute = 'wscript.exe'; Arguments = 'a b c' })
         }
         $hit = & $script:TriggerModule {
@@ -302,7 +329,7 @@ Describe 'TriggerRegistry fingerprint and idempotency' {
         $hash = 'f' * 64
         $actionSpec = [ordered]@{ exe = 'wscript.exe'; args = 'flow watch' }
         $task = [pscustomobject]@{
-            Description = "flow-ir-spec:$hash；说明"
+            Description = "flowwright-spec:$hash；说明"
             Actions     = @([pscustomobject]@{ Execute = 'wscript.exe'; Arguments = 'flow watch -AllowProd' })
         }
         # -Test semantics: ignore the registration switch, since the declaration itself matches
@@ -322,7 +349,7 @@ Describe 'TriggerRegistry fingerprint and idempotency' {
     It 'Readback validation failure: a mismatched description hash throws TRIGGER_DRIFT' {
         $actionSpec = [ordered]@{ exe = 'wscript.exe'; args = 'a b c' }
         $task = [pscustomobject]@{
-            Description = 'flow-ir-spec:' + ('0' * 64) + '；说明'
+            Description = 'flowwright-spec:' + ('0' * 64) + '；说明'
             Actions     = @([pscustomobject]@{ Execute = 'wscript.exe'; Arguments = 'a b c' })
         }
         $code = & $script:TriggerModule {
@@ -425,7 +452,7 @@ Describe 'TriggerRegistry flow name derivation (pad_flow_name wins)' {
         $spec = Get-TriggerSpec -FlowFile $f
         # The task name comes from the display name, not the internal name
         $spec.flowName | Should Be 'PESTER_DISPLAY'
-        $spec.taskName | Should Be 'flow-ir-PESTER_DISPLAY'
+        $spec.taskName | Should Be 'PESTER_DISPLAY'
         $runtime = New-TestRuntime -Dir $TestDrive
         $action = & $script:TriggerModule {
             param($Spec, $RuntimePath)
@@ -441,7 +468,7 @@ Describe 'TriggerRegistry flow name derivation (pad_flow_name wins)' {
         $f = New-TestFlow -Dir $TestDrive -Name 'no-pad-name' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
         $spec.flowName | Should Be 'PESTER_TRIGGER'
-        $spec.taskName | Should Be 'flow-ir-PESTER_TRIGGER'
+        $spec.taskName | Should Be 'PESTER_TRIGGER'
     }
 }
 

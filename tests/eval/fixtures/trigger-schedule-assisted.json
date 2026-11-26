@@ -3,7 +3,7 @@
   "description": "For trigger assertion: schedule trigger with assisted=true plus a node requiring manual confirmation (attended mid-run)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-trigger-assisted",
+    "task_name": "trigger-assisted",
     "time": "09:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday",

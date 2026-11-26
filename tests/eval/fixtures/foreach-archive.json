@@ -3,7 +3,7 @@
   "description": "Move each CSV from the downloads directory into the archive directory one by one (synthetic sample for structural evaluation)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-foreach-archive",
+    "task_name": "sample-foreach-archive",
     "time": "18:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"

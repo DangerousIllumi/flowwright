@@ -3,7 +3,7 @@
   "description": "Poll the inbox and stop early on receipt; notify only when nothing ever arrives (synthetic sample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-no-match-early-exit",
+    "task_name": "sample-no-match-early-exit",
     "time": "09:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"

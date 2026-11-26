@@ -97,11 +97,35 @@ function Log([string]$m) { Write-Host "[schedule] $m" }
 # Parsing of the child process's last-line PAD_SYNC_RESULT is centralised in PadTelemetry; this script no longer carries its own regex
 Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
 
-# Task name: flow-ir-<flow name>; characters that are invalid in a task name and whitespace are all replaced with underscores
+# Task name: the flow name itself; characters that are invalid in a task name and whitespace are all replaced with underscores.
+# The "flow-ir-" prefix was dropped: the task name is now the flow name. A task registered under the old
+# name keeps firing, so every lookup must still be able to find it by its legacy name (see Resolve-ScheduleTaskName).
+# The core derivation lives in PadFlowDeclarations.psm1, shared with the trigger registrar.
+Import-Module (Join-Path $here 'PadFlowDeclarations.psm1') -Force
+
 function Get-ScheduleTaskName([string]$FlowName) {
-    $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|\s]', '_').Trim('_')
+    $safe = ConvertTo-TaskNameCore $FlowName
     if (-not $safe) { throw 'flow name is empty; cannot build a task name' }
-    return 'flow-ir-' + $safe
+    return $safe
+}
+
+# Find the task under its current name first, then under the legacy name.
+# Without the legacy fallback the task registered before the rename becomes an orphan: it still fires,
+# but nothing can query or unregister it any more.
+# Returns $null when neither name exists on this machine.
+function Resolve-ScheduleTaskName {
+    param([string]$TaskName, [string]$FlowName)
+    $candidates = @()
+    if ($TaskName) { $candidates += $TaskName }
+    if ($FlowName) {
+        foreach ($c in @(Get-TriggerTaskNameCandidates $FlowName)) {
+            if ($c -and $candidates -notcontains $c) { $candidates += $c }
+        }
+    }
+    foreach ($name in $candidates) {
+        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { return $name }
+    }
+    return $null
 }
 
 # Parse the trigger time and return a valid DateTime (keeping only the time of day)
@@ -337,9 +361,12 @@ if (-not $NoMain) {
         # ── Query ──
         if ($List) {
             $result.action = 'list'
-            $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            if (-not $task) { throw "scheduled task not found: $TaskName (register once without -List first)" }
-            $info = Get-ScheduledTaskInfo -TaskName $TaskName
+            # Look under the current name first, then under the legacy name: a task registered before
+            # the rename still fires, so it must stay queryable
+            $found = Resolve-ScheduleTaskName -TaskName $TaskName -FlowName $FlowName
+            if (-not $found) { throw "scheduled task not found: $TaskName (register once without -List first)" }
+            $result.taskName = $found
+            $info = Get-ScheduledTaskInfo -TaskName $found
             $result.nextRunTime = $info.NextRunTime
             $result.lastRunTime = $info.LastRunTime
             $result.lastTaskResult = $info.LastTaskResult
@@ -351,11 +378,13 @@ if (-not $NoMain) {
         # ── Remove ──
         if ($Remove) {
             $result.action = 'remove'
-            $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            if (-not $task) { Log "scheduled task does not exist; nothing to delete: $TaskName"; $result.ok = $true; $exitCode = 0; return }
-            if ($DryRun) { Log "[DryRun] would delete the scheduled task: $TaskName"; $result.ok = $true; $exitCode = 0; return }
-            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-            Log "deleted the scheduled task: $TaskName"
+            # The legacy name is tried too, so a task registered before the rename can still be deleted
+            $found = Resolve-ScheduleTaskName -TaskName $TaskName -FlowName $FlowName
+            if (-not $found) { Log "scheduled task does not exist; nothing to delete: $TaskName"; $result.ok = $true; $exitCode = 0; return }
+            $result.taskName = $found
+            if ($DryRun) { Log "[DryRun] would delete the scheduled task: $found"; $result.ok = $true; $exitCode = 0; return }
+            Unregister-ScheduledTask -TaskName $found -Confirm:$false
+            Log "deleted the scheduled task: $found"
             $result.ok = $true; $exitCode = 0
             return
         }
@@ -363,11 +392,12 @@ if (-not $NoMain) {
         # ── Trigger now (for verification; it really runs the flow once) ──
         if ($RunNow) {
             $result.action = 'run-now'
-            $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            if (-not $task) { throw "scheduled task not found: $TaskName" }
-            if ($DryRun) { Log "[DryRun] would trigger now: $TaskName"; $result.ok = $true; $exitCode = 0; return }
-            Start-ScheduledTask -TaskName $TaskName
-            Log "triggered the scheduled task: $TaskName (see business\manifest.jsonl for the run result)"
+            $found = Resolve-ScheduleTaskName -TaskName $TaskName -FlowName $FlowName
+            if (-not $found) { throw "scheduled task not found: $TaskName" }
+            $result.taskName = $found
+            if ($DryRun) { Log "[DryRun] would trigger now: $found"; $result.ok = $true; $exitCode = 0; return }
+            Start-ScheduledTask -TaskName $found
+            Log "triggered the scheduled task: $found (see business\manifest.jsonl for the run result)"
             $result.ok = $true; $exitCode = 0
             return
         }
@@ -443,7 +473,7 @@ if (-not $NoMain) {
             -ExecutionTimeLimit (New-TimeSpan -Minutes 180) -MultipleInstances IgnoreNew
         # Interactive = run only while that user is logged in, which is exactly what attended means
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
-        $desc = "flow-ir: runs daily at $Time after the workday-calendar check, PAD flow $FlowName (attended)"
+        $desc = "flowwright: runs daily at $Time after the workday-calendar check, PAD flow $FlowName (attended)"
 
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
             -Settings $settings -Principal $principal -Force -Description $desc | Out-Null

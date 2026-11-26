@@ -237,6 +237,7 @@ function Get-TriggerSpec {
     }
 
     $taskName = $null
+    $taskNameDerived = $false
     if ($kind -ne 'manual') {
         if ((Test-TriggerProp $trg 'task_name')) {
             $taskName = [string]$trg.task_name
@@ -244,7 +245,10 @@ function Get-TriggerSpec {
                 throw (New-TriggerException 'TRIGGER_INVALID' "task_name=$taskName does not match ^[A-Za-z0-9._-]{1,64}$")
             }
         }
-        if (-not $taskName) { $taskName = Get-ScheduleTaskName $flowName }
+        if (-not $taskName) {
+            $taskName = Get-ScheduleTaskName $flowName
+            $taskNameDerived = $true
+        }
     }
 
     return [ordered]@{
@@ -253,6 +257,10 @@ function Get-TriggerSpec {
         flowFile     = (Resolve-Path -LiteralPath $FlowFile).Path
         configFile   = $ConfigFile
         taskName     = $taskName
+        # Whether the task name was derived from the flow name (an explicit task_name has no legacy twin)
+        taskNameDerived = $taskNameDerived
+        # The name the task may still carry from before the prefix was dropped; empty when there is none
+        legacyTaskName = $(if ($taskNameDerived) { Get-LegacyTriggerTaskName $flowName } else { $null })
         time         = $time
         days         = $days
         daysDeclared = $daysDeclared
@@ -365,10 +373,14 @@ function Get-TriggerActionSpec {
 }
 
 # The task description carries specHash, used for idempotency and read-back
+# The anchor was renamed from "flow-ir-spec:" to "flowwright-spec:". The old anchor is still read,
+# so a task registered before the rename still matches its declaration instead of reporting drift.
 function Get-TaskSpecHash([string]$Description) {
     if (-not $Description) { return $null }
-    $m = [regex]::Match([string]$Description, 'flow-ir-spec:([0-9a-f]{64})')
+    $m = [regex]::Match([string]$Description, 'flowwright-spec:([0-9a-f]{64})')
     if ($m.Success) { return $m.Groups[1].Value }
+    $legacy = [regex]::Match([string]$Description, 'flow-ir-spec:([0-9a-f]{64})')
+    if ($legacy.Success) { return $legacy.Groups[1].Value }
     return $null
 }
 
@@ -400,6 +412,32 @@ function Assert-TriggerReadback {
     if (-not (Test-TriggerTaskMatch $Task $ActionSpec $SpecHash)) {
         throw (New-TriggerException 'TRIGGER_DRIFT' "readback check failed: the task description hash or action arguments disagree with the declaration ($TaskName)")
     }
+}
+
+# Locate the scheduled task under its current name, then under the legacy name.
+# Without the legacy fallback a task registered before the rename becomes an orphan: it keeps firing,
+# but nothing can query or unregister it any more — and the unregister would silently report "absent".
+# Returns the name that was found, or $null when neither exists.
+function Resolve-TriggerTaskName {
+    param($Spec)
+    $names = @([string]$Spec.taskName)
+    if ($Spec.legacyTaskName) { $names += [string]$Spec.legacyTaskName }
+    foreach ($name in $names) {
+        if (-not $name) { continue }
+        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { return $name }
+    }
+    return $null
+}
+
+# The legacy-named task of this flow, when it still exists on this machine.
+# Registering under the current name would leave that old task firing as well — two runs for one flow —
+# so the caller must report it instead of creating the duplicate silently.
+function Get-TriggerLegacyTaskName($Spec) {
+    if (-not $Spec.legacyTaskName) { return $null }
+    if (Get-ScheduledTask -TaskName ([string]$Spec.legacyTaskName) -ErrorAction SilentlyContinue) {
+        return [string]$Spec.legacyTaskName
+    }
+    return $null
 }
 
 function Get-TriggerSummary($Spec) {
@@ -502,9 +540,18 @@ function Get-TriggerFileKey($File) {
     return ('{0}|{1}|{2}' -f $File.Name, $File.Length, $File.LastWriteTimeUtc.ToString('o'))
 }
 
+# Ledger file name: the task name plus .json.
+# The task name lost its "flow-ir-" prefix, so a ledger written before the rename sits under the old name.
+# As long as only the old ledger exists, the old file keeps being used: starting a new one would lose the
+# "already triggered" history and the same file would trigger a second time.
 function Get-TriggerLedgerPath($Spec, $Runtime) {
     $dir = Resolve-TriggerStateDir $Runtime
-    return (Join-Path $dir ($Spec.taskName + '.json'))
+    $new = (Join-Path $dir ($Spec.taskName + '.json'))
+    if ($Spec.legacyTaskName) {
+        $legacy = (Join-Path $dir ($Spec.legacyTaskName + '.json'))
+        if (-not (Test-Path -LiteralPath $new) -and (Test-Path -LiteralPath $legacy)) { return $legacy }
+    }
+    return $new
 }
 
 # Read the ledger: a missing file counts as empty; an existing but invalid JSON is a hard failure, so history de-duplication is not silently lost
@@ -564,14 +611,21 @@ function Register-ScheduleTrigger {
     $runtime = Resolve-TriggerRuntimeConfig -RuntimeConfigPath $RuntimeConfigPath
     $actionSpec = Get-TriggerActionSpec -Spec $Spec -Runtime $runtime -AllowProd:$AllowProd
     $hash = Get-TriggerFingerprint -Spec $Spec
-    $description = "flow-ir-spec:$hash; flow-ir: registered by $($Spec.kind) $($Spec.time) to run PAD flow $($Spec.flowName) (attended)"
+    $description = "flowwright-spec:$hash; flowwright: registered by $($Spec.kind) $($Spec.time) to run PAD flow $($Spec.flowName) (attended)"
+    # A task registered under the old name is still firing. Registering under the new name would give this
+    # flow two tasks, so the leftover is named instead of being deleted behind the user's back
+    $legacyTask = Get-TriggerLegacyTaskName $Spec
+    $legacyEvidence = @()
+    if ($legacyTask) {
+        $legacyEvidence = @("a scheduled task named '$legacyTask' (registered before the prefix was dropped) still exists and keeps firing; unregister it by hand, otherwise this flow runs twice")
+    }
 
     if ($DryRun) {
         return [ordered]@{
             ok = $true; action = 'register'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = 'planned'; dryRun = $true
             description = $description; exe = $actionSpec.exe; args = $actionSpec.args
-            evidence = @('DryRun: scheduled task not written')
+            evidence = @('DryRun: scheduled task not written') + $legacyEvidence
         }
     }
 
@@ -580,7 +634,7 @@ function Register-ScheduleTrigger {
         return [ordered]@{
             ok = $true; action = 'register'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = 'unchanged'; dryRun = $false
-            evidence = @('already registered with a matching specHash; nothing written')
+            evidence = @('already registered with a matching specHash; nothing written') + $legacyEvidence
         }
     }
     $changed = $(if ($existing) { 'updated' } else { 'created' })
@@ -604,7 +658,7 @@ function Register-ScheduleTrigger {
         return [ordered]@{
             ok = $true; action = 'register'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = $changed; dryRun = $false
-            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('readback check passed')
+            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('readback check passed') + $legacyEvidence
         }
     } catch {
         # Registration/read-back failed: hard failure plus an alert, no "continue deploying" degradation
@@ -623,7 +677,10 @@ function Test-ScheduleTrigger {
     $runtime = Resolve-TriggerRuntimeConfig -RuntimeConfigPath $RuntimeConfigPath
     $actionSpec = Get-TriggerActionSpec -Spec $Spec -Runtime $runtime
     $hash = Get-TriggerFingerprint -Spec $Spec
-    $task = Get-ScheduledTask -TaskName $Spec.taskName -ErrorAction SilentlyContinue
+    # The current name first, then the legacy name: a task registered before the rename is still the
+    # task of this flow and must be verifiable, otherwise it looks unregistered while it keeps firing
+    $foundName = Resolve-TriggerTaskName -Spec $Spec
+    $task = if ($foundName) { Get-ScheduledTask -TaskName $foundName -ErrorAction SilentlyContinue } else { $null }
     if (-not $task) {
         return [ordered]@{
             ok = $false; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
@@ -634,47 +691,48 @@ function Test-ScheduleTrigger {
     if (-not (Test-TriggerTaskMatch $task $actionSpec $hash -IgnoreAllowProd)) {
         return [ordered]@{
             ok = $false; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
-            taskName = $Spec.taskName; specHash = $hash; status = 'drift'
-            code = 'TRIGGER_DRIFT'; message = "scheduled task disagrees with the declaration ($($Spec.taskName))"
+            taskName = $foundName; specHash = $hash; status = 'drift'
+            code = 'TRIGGER_DRIFT'; message = "scheduled task disagrees with the declaration ($foundName)"
         }
     }
-    $info = Get-ScheduledTaskInfo -TaskName $Spec.taskName
+    $info = Get-ScheduledTaskInfo -TaskName $foundName
     if (-not $info.NextRunTime) {
         return [ordered]@{
             ok = $false; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
-            taskName = $Spec.taskName; specHash = $hash; status = 'drift'
-            code = 'TRIGGER_DRIFT'; message = "task has no next run time ($($Spec.taskName))"
+            taskName = $foundName; specHash = $hash; status = 'drift'
+            code = 'TRIGGER_DRIFT'; message = "task has no next run time ($foundName)"
         }
     }
     return [ordered]@{
         ok = $true; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
-        taskName = $Spec.taskName; specHash = $hash; status = 'registered'
+        taskName = $foundName; specHash = $hash; status = 'registered'
         nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('description hash and action arguments match')
     }
 }
 
 function Unregister-ScheduleTrigger {
     param($Spec, [switch]$DryRun)
+    # The legacy name is tried too, so a task registered before the rename can still be deleted
+    $foundName = Resolve-TriggerTaskName -Spec $Spec
     if ($DryRun) {
-        $task = Get-ScheduledTask -TaskName $Spec.taskName -ErrorAction SilentlyContinue
         return [ordered]@{
             ok = $true; action = 'unregister'; kind = $Spec.kind; flow = $Spec.flowName
-            taskName = $Spec.taskName; changed = $(if ($task) { 'planned' } else { 'absent' }); dryRun = $true
+            taskName = $(if ($foundName) { $foundName } else { $Spec.taskName })
+            changed = $(if ($foundName) { 'planned' } else { 'absent' }); dryRun = $true
             evidence = @('DryRun: scheduled task not deleted')
         }
     }
-    $task = Get-ScheduledTask -TaskName $Spec.taskName -ErrorAction SilentlyContinue
-    if (-not $task) {
+    if (-not $foundName) {
         return [ordered]@{
             ok = $true; action = 'unregister'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; changed = 'absent'; dryRun = $false; evidence = @('the task did not exist')
         }
     }
     try {
-        Unregister-ScheduledTask -TaskName $Spec.taskName -Confirm:$false -ErrorAction Stop
+        Unregister-ScheduledTask -TaskName $foundName -Confirm:$false -ErrorAction Stop
         return [ordered]@{
             ok = $true; action = 'unregister'; kind = $Spec.kind; flow = $Spec.flowName
-            taskName = $Spec.taskName; changed = 'removed'; dryRun = $false; evidence = @('scheduled task deleted')
+            taskName = $foundName; changed = 'removed'; dryRun = $false; evidence = @('scheduled task deleted')
         }
     } catch {
         if (-not $_.Exception.Data.Contains('code')) {
@@ -726,7 +784,13 @@ function Register-FileTrigger {
             -PadTriggerPath (Join-Path $moduleHere 'pad-trigger.ps1') `
             -RuntimeConfigPath $runtimePath -AllowProd:$AllowProd
         $hash = Get-TriggerFingerprint -Spec $Spec
-        $description = "flow-ir-spec:$hash; flow-ir: watching file $dir\$($Spec.filePattern) to run PAD flow $($Spec.flowName) (attended)"
+        $description = "flowwright-spec:$hash; flowwright: watching file $dir\$($Spec.filePattern) to run PAD flow $($Spec.flowName) (attended)"
+        # A task registered under the old name is still firing; naming it beats creating a second task for one flow
+        $legacyTask = Get-TriggerLegacyTaskName $Spec
+        $legacyEvidence = @()
+        if ($legacyTask) {
+            $legacyEvidence = @("a scheduled task named '$legacyTask' (registered before the prefix was dropped) still exists and keeps firing; unregister it by hand, otherwise this flow runs twice")
+        }
 
         if ($DryRun) {
             return [ordered]@{
@@ -735,7 +799,7 @@ function Register-FileTrigger {
                 dir = $dir; pattern = $Spec.filePattern; description = $description
                 exe = $actionSpec.exe; args = $actionSpec.args
                 stateDir = $stateDir
-                evidence = @('DryRun: scheduled task not written, state directory not created')
+                evidence = @('DryRun: scheduled task not written, state directory not created') + $legacyEvidence
             }
         }
 
@@ -748,7 +812,7 @@ function Register-FileTrigger {
             return [ordered]@{
                 ok = $true; action = 'register'; kind = 'file'; flow = $Spec.flowName
                 taskName = $Spec.taskName; specHash = $hash; changed = 'unchanged'; dryRun = $false
-                evidence = @('already registered with a matching specHash; nothing written')
+                evidence = @('already registered with a matching specHash; nothing written') + $legacyEvidence
             }
         }
         $changed = $(if ($existing) { 'updated' } else { 'created' })
@@ -773,7 +837,7 @@ function Register-FileTrigger {
             ok = $true; action = 'register'; kind = 'file'; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = $changed; dryRun = $false
             dir = $dir; pattern = $Spec.filePattern; stateDir = $stateDir
-            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('readback check passed')
+            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('readback check passed') + $legacyEvidence
         }
     } catch {
         if (-not $_.Exception.Data.Contains('code')) {

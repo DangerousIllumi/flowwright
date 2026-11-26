@@ -44,20 +44,33 @@ public class PadNative {
 }
 
 # Designer log: the console prints info only, debug-level entries go to the file only (for reviewing "scanned but skipped")
-# By default the file is %LOCALAPPDATA%\flow-ir\pad-designer.log and can be overridden with the FLOW_IR_PAD_DESIGNER_LOG environment variable
-$script:PadDesignerLogFile = if ($env:FLOW_IR_PAD_DESIGNER_LOG) { $env:FLOW_IR_PAD_DESIGNER_LOG } else {
-    Join-Path (Join-Path $env:LOCALAPPDATA 'flow-ir') 'pad-designer.log'
+# By default the file is %LOCALAPPDATA%\flowwright\pad-designer.log and can be overridden with the FLOW_IR_PAD_DESIGNER_LOG environment variable.
+# The directory name is not written here: PadState.psm1 owns it (including the one-time migration from the old "flow-ir" directory).
+# The path is resolved on first use rather than at import time, so merely importing this module never touches the filesystem.
+Import-Module (Join-Path $PSScriptRoot 'PadState.psm1') -Force
+
+$script:PadDesignerLogFile = $null
+
+function Get-PadDesignerLogFile {
+    if ($script:PadDesignerLogFile) { return $script:PadDesignerLogFile }
+    if ($env:FLOW_IR_PAD_DESIGNER_LOG) {
+        $script:PadDesignerLogFile = $env:FLOW_IR_PAD_DESIGNER_LOG
+    } else {
+        $script:PadDesignerLogFile = (Join-Path (Get-PadStateDir) 'pad-designer.log')
+    }
+    return $script:PadDesignerLogFile
 }
 
 function Write-PadDesignerLog([string]$msg, [string]$Level = 'info') {
     $line = '{0} [{1}] {2}' -f (Get-Date).ToString('o'), $Level, $msg
     if ($Level -eq 'info') { Write-Host "[pad-designer] $msg" }
     try {
-        $dir = Split-Path -Parent $script:PadDesignerLogFile
+        $logFile = Get-PadDesignerLogFile
+        $dir = Split-Path -Parent $logFile
         if ($dir -and -not (Test-Path -LiteralPath $dir)) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
         }
-        [IO.File]::AppendAllText($script:PadDesignerLogFile, $line + "`r`n",
+        [IO.File]::AppendAllText($logFile, $line + "`r`n",
             (New-Object Text.UTF8Encoding($false)))
     } catch { }
 }

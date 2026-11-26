@@ -21,10 +21,12 @@ Side-effect nodes must answer two orthogonal questions, mapped to two fields in 
 - `reversible`: can the consequences already produced be withdrawn; when `false`, write `reversibility_note` (it must state the revert path).
 Saving attachments, exporting files, reconciliation files and marking as read are reversible; sending mail and posting documents are not.
 
-**Identifiers that already live outside the repository do not follow the project name.** The scheduled-task prefix
-`flow-ir-`, the description anchor `flow-ir-spec:`, and the state directory `%LOCALAPPDATA%\flow-ir` are contracts
-with Windows: renaming them would orphan every registered task and break the fingerprint match. The repository is
-`flowwright`; these three stay as they are.
+**Identifiers that already live outside the repository are renamed together with the project, never halfway.**
+The scheduled-task prefix `flow-ir-`, the description anchor `flow-ir-spec:`, and the state directory
+`%LOCALAPPDATA%\flow-ir` were contracts with Windows; they are now `flowwright-` / `flowwright-spec:` /
+`%LOCALAPPDATA%\flowwright`, matching the repository name. The rename is complete, so the two old tasks
+registered before it still fire under their old names; every lookup (query, unregister) falls back to the
+old name, so an old task never becomes an orphan that nobody claims but that keeps triggering.
 
 ## 1. External script output conventions (what the RunDOSCommand hook parses)
 

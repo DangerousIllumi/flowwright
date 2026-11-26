@@ -15,7 +15,7 @@
           "op": "trigger",
           "def": {
             "kind": "schedule",
-            "task_name": "flow-ir-sample-schedule",
+            "task_name": "sample-schedule",
             "time": "09:00",
             "days": ["mon", "tue", "wed", "thu", "fri"],
             "gate": "workday",
@@ -32,7 +32,7 @@
           "op": "trigger",
           "def": {
             "kind": "file",
-            "task_name": "flow-ir-sample-file",
+            "task_name": "sample-file",
             "time": "08:30",
             "days": ["mon", "tue", "wed", "thu", "fri"],
             "file": {

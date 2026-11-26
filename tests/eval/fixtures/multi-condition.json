@@ -3,7 +3,7 @@
   "description": "Process only when both conditions hold (synthetic sample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-multi-condition",
+    "task_name": "sample-multi-condition",
     "time": "08:30",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"

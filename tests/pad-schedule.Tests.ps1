@@ -58,16 +58,25 @@ Describe 'pad-schedule pure function tests' {
     BeforeEach { $script:alertLogState = Get-AlertLogState }
     AfterEach { Restore-AlertLogState $script:alertLogState }
 
-    It 'task name: default prefix plus flow name' {
-        (Get-ScheduleTaskName 'PAD_SYNC_TEST') | Should Be 'flow-ir-PAD_SYNC_TEST'
+    It 'task name: the flow name itself, with no prefix' {
+        (Get-ScheduleTaskName 'PAD_SYNC_TEST') | Should Be 'PAD_SYNC_TEST'
     }
 
     It 'task name: whitespace and path separators become underscores' {
-        (Get-ScheduleTaskName '示例流程/日常 汇总') | Should Be 'flow-ir-示例流程_日常_汇总'
+        (Get-ScheduleTaskName '示例流程/日常 汇总') | Should Be '示例流程_日常_汇总'
     }
 
     It 'task name: empty flow name raises an error' {
         { Get-ScheduleTaskName '  ' } | Should Throw
+    }
+
+    It 'the legacy name is still a lookup candidate: a task registered before the rename stays reachable' {
+        # Without the legacy fallback an old task keeps firing but nothing can query or unregister it:
+        # it would be an orphan nobody claims. The candidate list therefore carries both names.
+        $c = @(Get-TriggerTaskNameCandidates 'PAD_SYNC_TEST')
+        $c.Count | Should Be 2
+        $c[0] | Should Be 'PAD_SYNC_TEST'
+        $c[1] | Should Be 'flow-ir-PAD_SYNC_TEST'
     }
 
     It 'trigger time: both HH:mm and H:mm parse' {

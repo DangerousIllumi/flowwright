@@ -3,7 +3,7 @@
   "description": "Open Excel, read all data, write one marker row only when data exists, then save (synthetic sample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-excel-read-write",
+    "task_name": "sample-excel-read-write",
     "time": "07:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"

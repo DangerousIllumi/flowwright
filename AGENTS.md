@@ -120,7 +120,7 @@ need a clean exit status: `Invoke-Pester tests; exit 0`. The CI step already end
 **PadLock tests locally**: inside a sandboxed terminal whose filesystem is mounted read-only,
 `tests\PadLock.Tests.ps1` ends at 5 passed / 3 failed. Those three are a known environment failure, not a
 regression; do not change the code or the tests to turn them green. The sandbox's write allowlist does not contain
-`%LOCALAPPDATA%\flow-ir`, while the ACL itself grants FullControl, so reads succeed and only writes and deletes
+`%LOCALAPPDATA%\flowwright`, while the ACL itself grants FullControl, so reads succeed and only writes and deletes
 are denied. For a real baseline run the file from a plain PowerShell window outside the sandbox (`-NoProfile`),
 where it reports 8/8. Never run this file in parallel: two processes compete for the same named mutex.
 

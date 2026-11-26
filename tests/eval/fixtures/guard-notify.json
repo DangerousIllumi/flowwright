@@ -3,7 +3,7 @@
   "description": "Send a notification email, but skip it when DRY_RUN=1 (synthetic sample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-guard-notify",
+    "task_name": "sample-guard-notify",
     "time": "10:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"

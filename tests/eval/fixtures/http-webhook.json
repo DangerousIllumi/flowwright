@@ -3,7 +3,7 @@
   "description": "POST a JSON payload to a webhook and branch on the status code (synthetic sample)",
   "trigger": {
     "kind": "schedule",
-    "task_name": "flow-ir-sample-http-webhook",
+    "task_name": "sample-http-webhook",
     "time": "18:30",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "gate": "workday"
