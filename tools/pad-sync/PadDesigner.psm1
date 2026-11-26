@@ -44,7 +44,7 @@ public class PadNative {
 }
 
 # Designer log: the console prints info only, debug-level entries go to the file only (for reviewing "scanned but skipped")
-# By default the file is %LOCALAPPDATA%\flowwright\pad-designer.log and can be overridden with the FLOW_IR_PAD_DESIGNER_LOG environment variable.
+# By default the file is %LOCALAPPDATA%\flowwright\pad-designer.log and can be overridden with the FLOWWRIGHT_PAD_DESIGNER_LOG environment variable.
 # The directory name is not written here: PadState.psm1 owns it (including the one-time migration from the old "flow-ir" directory).
 # The path is resolved on first use rather than at import time, so merely importing this module never touches the filesystem.
 Import-Module (Join-Path $PSScriptRoot 'PadState.psm1') -Force
@@ -53,8 +53,8 @@ $script:PadDesignerLogFile = $null
 
 function Get-PadDesignerLogFile {
     if ($script:PadDesignerLogFile) { return $script:PadDesignerLogFile }
-    if ($env:FLOW_IR_PAD_DESIGNER_LOG) {
-        $script:PadDesignerLogFile = $env:FLOW_IR_PAD_DESIGNER_LOG
+    if ($env:FLOWWRIGHT_PAD_DESIGNER_LOG) {
+        $script:PadDesignerLogFile = $env:FLOWWRIGHT_PAD_DESIGNER_LOG
     } else {
         $script:PadDesignerLogFile = (Join-Path (Get-PadStateDir) 'pad-designer.log')
     }

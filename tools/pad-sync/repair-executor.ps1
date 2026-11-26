@@ -27,7 +27,7 @@ $ErrorActionPreference = 'Stop'
 
 # PAD root resolution priority (R1/R2 only look for same-name items and create directories under it):
 #   1) -PadRoot passed explicitly: the caller or a test stated it, highest priority;
-#   2) the FLOW_IR_PAD_ROOT environment variable: switches between multiple deployments on one machine;
+#   2) the FLOWWRIGHT_PAD_ROOT environment variable: switches between multiple deployments on one machine;
 #   3) the PadRoot field of the local runtime config business\config\runtime.json (that file is not committed);
 #   4) fall back to C:\PAD so existing callers (e.g. pad-repair-loop without -PadRoot) behave as before.
 # 2) and 3) are only adopted when the directory really exists, so a mistyped variable name cannot silently move the search root to an empty directory.
@@ -36,10 +36,10 @@ function Resolve-PadRoot([string]$Explicit) {
     if ($Explicit) { return $Explicit }
 
     # 2) Environment variable
-    $envRoot = [string]$env:FLOW_IR_PAD_ROOT
+    $envRoot = [string]$env:FLOWWRIGHT_PAD_ROOT
     if ($envRoot) {
         if (Test-Path -LiteralPath $envRoot) { return $envRoot }
-        Write-Host "[executor] the directory pointed to by FLOW_IR_PAD_ROOT does not exist; ignored: $envRoot"
+        Write-Host "[executor] the directory pointed to by FLOWWRIGHT_PAD_ROOT does not exist; ignored: $envRoot"
     }
 
     # 3) Local runtime config: read only the PadRoot field, skipping PadConfig's full required-field validation

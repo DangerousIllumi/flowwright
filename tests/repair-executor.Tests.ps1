@@ -255,7 +255,7 @@ Describe 'repair-executor rule tests' {
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
     }
 
-    It 'Without -PadRoot the search root comes from the FLOW_IR_PAD_ROOT environment variable (no longer fixed to C:\PAD)' {
+    It 'Without -PadRoot the search root comes from the FLOWWRIGHT_PAD_ROOT environment variable (no longer fixed to C:\PAD)' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'Scripts\target.py'
@@ -267,18 +267,18 @@ Describe 'repair-executor rule tests' {
         $ctx = Join-Path $work 'ctx.json'
         Write-Ctx $ctx 'FileNotFound'
 
-        $old = $env:FLOW_IR_PAD_ROOT
+        $old = $env:FLOWWRIGHT_PAD_ROOT
         try {
-            $env:FLOW_IR_PAD_ROOT = $pad
+            $env:FLOWWRIGHT_PAD_ROOT = $pad
             (Invoke-Executor $ctx $in $out) | Should Be 0
         } finally {
-            if ($old) { $env:FLOW_IR_PAD_ROOT = $old }
-            else { Remove-Item Env:FLOW_IR_PAD_ROOT -ErrorAction SilentlyContinue }
+            if ($old) { $env:FLOWWRIGHT_PAD_ROOT = $old }
+            else { Remove-Item Env:FLOWWRIGHT_PAD_ROOT -ErrorAction SilentlyContinue }
         }
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
     }
 
-    It 'An explicit -PadRoot takes precedence over the FLOW_IR_PAD_ROOT environment variable' {
+    It 'An explicit -PadRoot takes precedence over the FLOWWRIGHT_PAD_ROOT environment variable' {
         $work = New-Work
         $explicit = Join-Path $work 'explicit'
         $fromEnv = Join-Path $work 'from-env'
@@ -293,13 +293,13 @@ Describe 'repair-executor rule tests' {
         $ctx = Join-Path $work 'ctx.json'
         Write-Ctx $ctx 'FileNotFound'
 
-        $old = $env:FLOW_IR_PAD_ROOT
+        $old = $env:FLOWWRIGHT_PAD_ROOT
         try {
-            $env:FLOW_IR_PAD_ROOT = $fromEnv
+            $env:FLOWWRIGHT_PAD_ROOT = $fromEnv
             (Invoke-Executor $ctx $in $out $explicit) | Should Be 0
         } finally {
-            if ($old) { $env:FLOW_IR_PAD_ROOT = $old }
-            else { Remove-Item Env:FLOW_IR_PAD_ROOT -ErrorAction SilentlyContinue }
+            if ($old) { $env:FLOWWRIGHT_PAD_ROOT = $old }
+            else { Remove-Item Env:FLOWWRIGHT_PAD_ROOT -ErrorAction SilentlyContinue }
         }
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
     }

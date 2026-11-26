@@ -1,4 +1,4 @@
-﻿# PadLock.psm1 — cross-process mutual exclusion: only one flow may occupy PAD at a time
+# PadLock.psm1 — cross-process mutual exclusion: only one flow may occupy PAD at a time
 #
 # Why a named mutex instead of a plain lock file:
 #   A lock file survives when the process is killed hard, so the waiter cannot tell "really running" from "leftover",
@@ -82,7 +82,7 @@ function Enter-PadRunLock {
     $script:Held = $false
     $script:WaitedSec = 0
     if (-not $script:Mutex) {
-        $script:Mutex = New-Object System.Threading.Mutex($false, 'flow-ir-pad-run')
+        $script:Mutex = New-Object System.Threading.Mutex($false, 'flowwright-pad-run')
     }
 
     $deadline = (Get-Date).AddSeconds($WaitSec)
