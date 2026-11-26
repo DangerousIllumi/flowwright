@@ -717,16 +717,16 @@ function Invoke-InputCheck {
             if ($probe.count -ge 2) {
                 $names = @($probe.names) -join ', '
                 $issues += @{ status = 'fail'; code = 'INPUT_FILE_AMBIGUOUS'
-                    message = "$at has $($cands.Count) candidates ($names); no 'take the latest' guessing; clean up the directory first"
+                    message = "$at has $($probe.count) candidates ($names); no 'take the latest' guessing; clean up the directory first"
                     evidence = @("$at $dir\$pattern", "candidate(s): $names") }
                 continue
             }
-            if ($cands.Count -eq 0 -and $required) {
+            if ($probe.count -eq 0 -and $required) {
                 $issues += @{ status = 'fail'; code = 'INPUT_FILE_MISSING'
                     message = "$at required input not found: $dir\$pattern"; evidence = @("$at") }
                 continue
             }
-            $passEvidence += "$at ${dir}\${pattern}: $($cands.Count) candidate(s)$(if ($required) { ' (required)' } else { ' (optional)' })"
+            $passEvidence += "$at ${dir}\${pattern}: $($probe.count) candidate(s)$(if ($required) { ' (required)' } else { ' (optional)' })"
         }
     }
 

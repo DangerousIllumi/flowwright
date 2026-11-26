@@ -100,4 +100,22 @@ try {
     Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# 6) Hardcoded drive-letter paths in business\scripts and business\flows. This gate reads the working tree, not the
+#    staged snapshot, because business\ is gitignored and never reaches a commit; without a business\ layer the script
+#    prints "skip: business layer not present" and exits 0, so a plain clone still commits normally.
+#    Re-query the root: the gate above is dot-sourced, and its parameter block overwrites this scope's $repoRoot.
+$repoRoot = (& git rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+if ($repoRoot) { $repoRoot = $repoRoot.Trim() } else { $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')) }
+$hardcodedGate = Join-Path $repoRoot 'tools\verify\check-hardcoded-paths.ps1'
+if (-not (Test-Path -LiteralPath $hardcodedGate)) {
+    Write-GateInfo "Hardcoded path scan script not found: $hardcodedGate" 'Red'
+    $exitCode = 1
+} else {
+    & $hardcodedGate -RepoRoot $repoRoot
+    if ($LASTEXITCODE -ne 0) {
+        Write-GateInfo 'Hardcoded path gate failed: take the drive-letter path from business\config\*.json or add an allowlist entry with a stated reason; do not bypass with --no-verify' 'Red'
+        $exitCode = 1
+    }
+}
+
 exit $exitCode
