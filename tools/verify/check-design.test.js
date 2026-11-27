@@ -132,6 +132,16 @@ test("--flow without a design record is a skip", () => {
   assert.match(result.stdout, /skip: no design record/);
 });
 
+test("--flow --require without a design record is DESIGN_RECORD_MISSING with exit 2", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "check-design-"));
+  const flow = path.join(dir, "lonely.json");
+  fs.copyFileSync(path.join(REPO, "tests", "eval", "fixtures", "file-copy-text.json"), flow);
+  const result = run(["--flow", flow, "--require"]);
+  assert.strictEqual(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stdout, /DESIGN_RECORD_MISSING: /);
+  assert.ok(result.stdout.includes(flow), "the message must name the flow path");
+});
+
 test("keeps output ASCII when the record contains non-ASCII text", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "check-design-"));
   const file = writeDesign(

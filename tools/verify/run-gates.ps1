@@ -7,7 +7,8 @@
     tier is orchestration only: it runs the existing gates and reads their exit codes. No gate's verdict is
     re-implemented, relaxed or interpreted beyond pass/skip/red/blocked.
 
-      pregen   decision ledger (check-decisions.js --mode=fail)
+      pregen   design record (check-design.js --flow; skips when no <name>.design.json)
+                + decision ledger (check-decisions.js --mode=fail)
                + node declaration completeness, warn-only (eval-flow.js --warn)
                + path origin (check-hardcoded-paths.ps1)
                + referenced-target existence (check-referenced-paths.ps1)
@@ -170,6 +171,7 @@ function Get-LatestRunSince {
     return [datetime]::Parse($last)
 }
 
+$designTool = Join-Path $RepoRoot 'tools\verify\check-design.js'
 $decisionTool = Join-Path $RepoRoot 'tools\verify\check-decisions.js'
 $declarationTool = Join-Path $RepoRoot 'tools\pad-robin\eval-flow.js'
 $hardcodedTool = Join-Path $RepoRoot 'tools\verify\check-hardcoded-paths.ps1'
@@ -189,6 +191,12 @@ if (-not $repoBoundary.EndsWith('\')) { $repoBoundary += '\' }
 $flowInsideRepo = $FlowFile.StartsWith($repoBoundary, [StringComparison]::OrdinalIgnoreCase)
 
 if ($Tier -eq 'pregen' -or $Tier -eq 'admit') {
+    # Design record check: pregen skips (exit 0) when the flow has no <name>.design.json, so generation
+    # keeps working before a design record exists; admit passes --require so a missing record blocks
+    # admission with exit 2 (DESIGN_RECORD_MISSING) instead of silently skipping.
+    $designArgs = @('--flow', $FlowFile)
+    if ($Tier -eq 'admit') { $designArgs += '--require' }
+    Invoke-GateCheck 'design' 'node' (@($designTool) + $designArgs)
     Invoke-GateCheck 'decisions' 'node' @($decisionTool, $FlowFile, '--mode=fail')
     # Warn-only: eval-flow --warn lists nodes missing run_mode / idempotent / reversible and always exits 0,
     # so an incomplete declaration is reported here but never turns the tier red or blocks generation.

@@ -4,10 +4,11 @@
  *
  * Usage:
  *   node tools/verify/check-design.js <design.json> [--flow <flow.json>]
- *   node tools/verify/check-design.js --flow <flow.json>
+ *   node tools/verify/check-design.js --flow <flow.json> [--require]
  *
  * The second form derives <name>.design.json next to the flow and skips when the
  * record does not exist, so a repository without design records keeps working.
+ * With --require a missing record is an input error (exit 2) instead of a skip.
  *
  * Design record path: business/flows/<name>.design.json
  * Shape and rules: docs/design-record.md
@@ -46,10 +47,13 @@ function stringList(value) {
 function parseArgs(argv) {
   let designPath = null;
   let flowPath = null;
+  let require = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--flow") {
       flowPath = argv[++i] || null;
+    } else if (arg === "--require") {
+      require = true;
     } else if (arg === "--help" || arg === "-h") {
       return { help: true };
     } else if (!designPath) {
@@ -58,7 +62,7 @@ function parseArgs(argv) {
       return { error: `unexpected argument: ${arg}` };
     }
   }
-  return { designPath, flowPath };
+  return { designPath, flowPath, require };
 }
 
 function resolveFlowPath(designPath, declared) {
@@ -217,7 +221,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     line("usage: node tools/verify/check-design.js <design.json> [--flow <flow.json>]");
-    line("       node tools/verify/check-design.js --flow <flow.json>   # derives <name>.design.json; skips when absent");
+    line("       node tools/verify/check-design.js --flow <flow.json> [--require]   # derives <name>.design.json; skips when absent unless --require");
     return 0;
   }
   if (args.error) {
@@ -229,6 +233,10 @@ function main() {
   if (!designPath && args.flowPath) {
     designPath = args.flowPath.replace(/\.json$/i, ".design.json");
     if (!fs.existsSync(designPath)) {
+      if (args.require) {
+        line(`[check-design] DESIGN_RECORD_MISSING: ${args.flowPath}`);
+        return 2;
+      }
       line(`[check-design] skip: no design record for ${args.flowPath}`);
       return 0;
     }
