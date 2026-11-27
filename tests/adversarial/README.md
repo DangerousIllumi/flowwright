@@ -1,6 +1,6 @@
 # Adversarial cases
 
-Hold-out cases, written and owned by the verification role (T). The generation role (B/C) must not read
+Hold-out cases, written and owned by the verification role (T). The generation role (B) must not read
 this directory: a generator that can see the expectations ends up written to the test instead of to the spec,
 and then "passes" stops meaning "correct".
 

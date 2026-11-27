@@ -3,7 +3,7 @@
     Adversarial-set gate: the hold-out cases belong to verification and generation must not read them.
 .DESCRIPTION
     tests/adversarial/<category>/<case>.json is written by the verification role (T) only. The generation
-    role (B/C) must not read it: the set is the only thing that keeps "passes the tests" different from
+    role (B) must not read it: the set is the only thing that keeps "passes the tests" different from
     "does what the spec says", and a generator that can see the expectations is written to the test.
 
     Four conditions fail the gate:

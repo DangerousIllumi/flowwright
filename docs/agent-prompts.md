@@ -1,4 +1,4 @@
-# Agent A & Agent B interaction prompts
+# Role prompts: flow designer (A), code generator (B), verification role (T)
 
 > **Version v3** (revised 2026-10-15)
 > Basis for the revision:
@@ -25,7 +25,24 @@
 
 ---
 
-## Agent A: flow designer
+## Role model
+
+Three responsibilities, not three chatty agents:
+
+| Role | Carries | How it is implemented |
+|---|---|---|
+| **A — design** | Requirement → `flow.json` + flowchart; the mandatory answers | `skills/pad-flow-designer/` plus the Agent A prompt below; the only place the model designs |
+| **B — generation** | `flow.json` → `.robin` | `skills/pad-robin-coder/` plus the deterministic generator `flow-to-robin.js`; the assistant runs the generator and relays its report, it does not hand-write Robin |
+| **T — verification** | The hold-out cases (`tests/adversarial/`) and the test report | Gates, not a prompt: `check.js` → `eval-flow.js` → `pad-admit.ps1` → `run-gates.ps1` (pregen / admit / deliver) → `run-test-report.ps1` → `check-test-report.ps1`. T owns the hold-out set; role B must not read it |
+
+The default deployment is **one assistant** following `AGENTS.md` and `docs/prompts/nl-to-flow.md`. The A/B
+prompts below are an optional way to split the work, and T is never configured as a separate agent: it is the
+gate chain plus the hold-out set. Wherever this document says "hand over", it means the next stage starts; it
+does not require another process.
+
+---
+
+## Agent A (role A): flow designer
 
 ### System prompt
 
@@ -364,7 +381,7 @@ hand-drawn new nodes and edges are all recognized and reported correctly.
 
 ---
 
-## Agent B: code generator (now a "template filler")
+## Agent B (role B): code generator (now a "template filler")
 
 ### System prompt
 
@@ -531,7 +548,7 @@ You are a PAD code generator agent. You translate flow.json into Robin text that
 
 ---
 
-## How the two agents collaborate (v3)
+## How the roles collaborate (v3)
 
 ```
 The user starts the AI coding assistant and opens the project folder
@@ -561,7 +578,18 @@ The user starts the AI coding assistant and opens the project folder
                         |
                         v
 +-------------------------------------------------------------+
-| Phase 3 (optional, advanced): authoritative validation      |
+| Phase 3: Role T verifies (deterministic gate chain)         |
+|  T: -> check.js / check-flows.js (the artifact parses)      |
+|     -> eval-flow.js (declarations + structural assertions)  |
+|     -> pad-admit.ps1 (fail=0 and ask=0)                     |
+|     -> run-gates.ps1 -Tier pregen|admit|deliver             |
+|     -> run-test-report.ps1 -> check-test-report.ps1         |
+|  T owns tests/adversarial/; role B must not read it         |
++-------------------------------------------------------------+
+                        |
+                        v
++-------------------------------------------------------------+
+| Phase 4 (optional, advanced): authoritative validation      |
 |  Host PAD's real compiler Compiler.Validate -> VALID/INVALID |
 |  (following power-automate-flows; needs Windows + PAD asm)  |
 +-------------------------------------------------------------+
@@ -587,6 +615,9 @@ of counterexample (unknown action / unknown parameter / `needs_ui_selector` acti
 
 ## Setting it up in an AI coding assistant
 
+> **T is not a third agent to configure.** There is no verification prompt or skill: T is the gate chain above
+> plus the hold-out set in `tests/adversarial/`. The options below only decide how roles A and B are packaged.
+
 ### Option 1: create custom agents
 1. Name Agent A "flow designer" and paste Agent A's system prompt
 2. Name Agent B "code generator" and paste Agent B's system prompt + the official PROMPT.md
@@ -596,7 +627,7 @@ of counterexample (unknown action / unknown parameter / `needs_ui_selector` acti
 - **/generate**: run `flow-to-robin.js`, produce output.txt and self-check
 
 ### Option 3: one agent with role switching
-Define both phases in the project rules and switch on the keywords "design the flow" / "generate the code".
+Define both roles in the project rules and switch on the keywords "design the flow" / "generate the code".
 
 ### Option 4 (recommended): make Agent B a reusable Skill
 Package the three KB files + `flow-to-robin.js`/`check.js` + PROMPT.md + the red-line list into a local Skill
@@ -607,5 +638,6 @@ prompt by hand every time.
 > (the manual itself had errors) → v2 looked up the table and filled in values (reliable, but the model copied
 > line by line, slowly and error-prone) → **v3 turned the copying step into the tool `flow-to-robin.js`, leaving
 > the model to handle only what the tool reports**. The whole chain "natural language → flow.json → pasteable
-> Robin → pre-paste checks" is now deterministic, and the model is used in exactly two places: Agent A
-> understanding the requirement, and the AI steps explicitly marked inside a flow.
+> Robin → pre-paste checks" is now deterministic: the model is used to understand the requirement and for the
+> AI steps explicitly marked inside a flow; generation, static checks, admission and verification are
+> deterministic tooling.
