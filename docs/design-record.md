@@ -46,7 +46,7 @@ passes `--require`, so a flow without a design record is blocked at admission wi
 
 Required fields: `requirements`, `mapping`, `lane`, `failure_paths`, `state_markers`,
 `rejected_alternatives`. `flow` is optional but recommended; when present the checker resolves it and
-cross-checks node ids.
+cross-checks node ids. `decisions` is optional; once it appears it is checked against the ledger.
 
 ## What the checker proves
 
@@ -58,6 +58,11 @@ cross-checks node ids.
   description.
 - Every `state_markers[]` entry names a marker, a known `kind` and where it is used.
 - Every `rejected_alternatives[]` entry records both the option and why it was rejected.
+- An optional `decisions` array, each element shaped `{"decision_id": "D-003"}`, records that this design
+  choice was written into `business/decisions.jsonl` as a `class=design`, `decided_by=user` row. When the
+  field is present, a `decision_id` with no such row in the ledger is reported as
+  `DESIGN_DECISION_NOT_IN_LEDGER` and the checker exits 2; when the field is absent the whole rule is
+  skipped, so it is not a required field.
 - When a flow is available: mapped node ids and failure-path node ids exist, and every external-call node
   (`Outlook.*`, `Excel.*`, `SAP.*`, `FTP.*`, `Web.*`, `WebAutomation.*`, `Scripting.Run*`) has a
   `failure_paths` entry.

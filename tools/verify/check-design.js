@@ -217,11 +217,63 @@ function validate(doc, designPath, flowOverride) {
   return failures;
 }
 
+/**
+ * Design decisions must live in the ledger. The optional `decisions` field of a design record cites
+ * decision ids: [{"decision_id":"D-00X"}]. When the field is present, every cited id must exist in
+ * business/decisions.jsonl (derived from the design record's own directory, never from cwd) as a record
+ * with class=design and decided_by=user. A missing ledger counts as a violation, never as a pass.
+ * When the field is absent the record is not judged at all - the field stays optional.
+ */
+function checkDesignDecisions(doc, designPath) {
+  const failures = [];
+  if (!doc || !Object.prototype.hasOwnProperty.call(doc, "decisions")) return failures;
+  const entries = doc.decisions;
+  if (!Array.isArray(entries)) {
+    failures.push("DESIGN_DECISION_NOT_IN_LEDGER: decisions must be an array of {decision_id} objects");
+    return failures;
+  }
+  const ledgerPath = path.join(path.dirname(designPath), "..", "decisions.jsonl");
+  const ledgerExists = fs.existsSync(ledgerPath);
+  const records = new Map();
+  if (ledgerExists) {
+    for (const raw of fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/)) {
+      const text = raw.trim();
+      if (!text) continue;
+      let rec = null;
+      try {
+        rec = JSON.parse(text);
+      } catch (e) {
+        continue; // an unreadable row is not a record
+      }
+      if (rec && typeof rec.id === "string" && rec.id) records.set(rec.id, rec);
+    }
+  }
+  for (const [index, entry] of entries.entries()) {
+    const id = entry && typeof entry === "object" ? entry.decision_id : undefined;
+    if (typeof id !== "string" || !id) {
+      failures.push(`DESIGN_DECISION_NOT_IN_LEDGER: decisions[${index}] has no string decision_id`);
+      continue;
+    }
+    const rec = records.get(id);
+    if (!rec) {
+      const why = ledgerExists ? `not found in ${ledgerPath}` : `ledger not found: ${ledgerPath}`;
+      failures.push(`DESIGN_DECISION_NOT_IN_LEDGER: decision_id=${id} class=null decided_by=null ${why}`);
+      continue;
+    }
+    if (rec.class !== "design" || rec.decided_by !== "user") {
+      failures.push(
+        `DESIGN_DECISION_NOT_IN_LEDGER: decision_id=${id} class=${JSON.stringify(rec.class)} decided_by=${JSON.stringify(rec.decided_by)} expected class=design and decided_by=user in ${ledgerPath}`
+      );
+    }
+  }
+  return failures;
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     line("usage: node tools/verify/check-design.js <design.json> [--flow <flow.json>]");
-    line("       node tools/verify/check-design.js --flow <flow.json> [--require]   # derives <name>.design.json; skips when absent unless --require");
+    line("       node tools/verify/check-design.js --flow <flow.json> [--require]   # derives <name>.design.json; skips when absent unless --require; with --require it also requires <name>.cases.json");
     return 0;
   }
   if (args.error) {
@@ -250,6 +302,17 @@ function main() {
     return 2;
   }
 
+  // --require also demands the flow's design cases: business/flows/<name>.json pairs with
+  // business/tests/eval/<name>.cases.json. Paths are derived from the flow path itself, never from cwd.
+  if (args.require && args.flowPath) {
+    const flowName = path.basename(args.flowPath).replace(/\.json$/i, "");
+    const casesPath = path.join(path.dirname(args.flowPath), "..", "tests", "eval", flowName + ".cases.json");
+    if (!fs.existsSync(casesPath)) {
+      line(`[check-design] DESIGN_CASES_MISSING: ${casesPath}`);
+      return 2;
+    }
+  }
+
   let doc;
   try {
     doc = JSON.parse(fs.readFileSync(designPath, "utf8"));
@@ -258,7 +321,7 @@ function main() {
     return 2;
   }
 
-  const failures = validate(doc, designPath, args.flowPath);
+  const failures = validate(doc, designPath, args.flowPath).concat(checkDesignDecisions(doc, designPath));
   line(`[check-design] ${designPath}`);
   if (failures.length === 0) {
     const clauses = Array.isArray(doc.requirements) ? doc.requirements.length : 0;
@@ -267,7 +330,7 @@ function main() {
   }
   for (const failure of failures) line(`[check-design] ${failure}`);
   line(`[check-design] failed: ${failures.length} violation(s)`);
-  return 1;
+  return failures.some((f) => f.startsWith("DESIGN_DECISION_NOT_IN_LEDGER:")) ? 2 : 1;
 }
 
 process.exit(main());

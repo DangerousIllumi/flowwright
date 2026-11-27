@@ -159,3 +159,66 @@ test("keeps output ASCII when the record contains non-ASCII text", () => {
   assert.match(result.stdout, /\\u8bfb/);
   assert.ok(!result.stdout.includes("\u8bfb"));
 });
+
+test("--flow --require without a <name>.cases.json is DESIGN_CASES_MISSING with exit 2", () => {
+  // business/flows/a.json pairs with business/tests/eval/a.cases.json; the cases file is deliberately
+  // not created, so the --require cases check must fire after the design record is found.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "check-design-cases-"));
+  const flowDir = path.join(repo, "business", "flows");
+  fs.mkdirSync(flowDir, { recursive: true });
+  const flow = path.join(flowDir, "a.json");
+  fs.copyFileSync(path.join(REPO, "tests", "eval", "fixtures", "file-copy-text.json"), flow);
+  fs.writeFileSync(path.join(flowDir, "a.design.json"), JSON.stringify(validDesign(), null, 2));
+  const result = run(["--flow", flow, "--require"], repo);
+  assert.strictEqual(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stdout, /DESIGN_CASES_MISSING: /);
+  assert.ok(
+    result.stdout.includes(path.join("tests", "eval", "a.cases.json")),
+    "the message must name the derived cases path"
+  );
+});
+
+/** Build a business tree with a flow, its design record and (optionally) one ledger row. */
+function writeBusinessWithLedger(ledgerRecord) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "check-design-ledger-"));
+  const flowDir = path.join(repo, "business", "flows");
+  fs.mkdirSync(flowDir, { recursive: true });
+  const flow = path.join(flowDir, "a.json");
+  fs.copyFileSync(path.join(REPO, "tests", "eval", "fixtures", "file-copy-text.json"), flow);
+  const design = validDesign({ decisions: [{ decision_id: "D-900" }] });
+  fs.writeFileSync(path.join(flowDir, "a.design.json"), JSON.stringify(design, null, 2));
+  if (ledgerRecord) {
+    fs.writeFileSync(path.join(repo, "business", "decisions.jsonl"), JSON.stringify(ledgerRecord) + "\n", "utf8");
+  }
+  return { repo, flow };
+}
+
+test("a design decision that is not a class=design ledger row is DESIGN_DECISION_NOT_IN_LEDGER with exit 2", () => {
+  const { repo, flow } = writeBusinessWithLedger({
+    id: "D-900",
+    class: "standard",
+    scope: "flow:a",
+    decision: "recorded but not a design decision",
+    decided_by: "user",
+    decided_at: "2026-11-27",
+  });
+  const result = run(["--flow", flow], repo);
+  assert.strictEqual(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stdout, /DESIGN_DECISION_NOT_IN_LEDGER: /);
+  assert.match(result.stdout, /decision_id=D-900/);
+  assert.match(result.stdout, /class="standard"/);
+});
+
+test("a design decision backed by a class=design decided_by=user ledger row passes with exit 0", () => {
+  const { repo, flow } = writeBusinessWithLedger({
+    id: "D-900",
+    class: "design",
+    scope: "flow:a",
+    decision: "the lane choice was made by a person",
+    decided_by: "user",
+    decided_at: "2026-11-27",
+  });
+  const result = run(["--flow", flow], repo);
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  assert.doesNotMatch(result.stdout, /DESIGN_DECISION_NOT_IN_LEDGER/);
+});
