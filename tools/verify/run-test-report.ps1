@@ -12,7 +12,7 @@
                      that reason is copied to skipped[].reason and registered in known_limitations as
                      "skipped:<id>: <reason>". The generator copies, it never invents a reason.
       adversarial -> tests\harness\, one case at a time; cases not implemented yet are recorded as "gap"
-      verdict     -> derived from the evidence above, never taken as an input
+      verdict     -> derived from the evidence above, never taken as an input; values: pass | fail | blocked | logic-only
       provenance  -> runner{path, sha256, run_id, generated_at} proves the gate who produced the report;
                      environment_verified says whether acceptance ran in the real target environment, and
                      defaults to false because a sandbox run only verifies logic
@@ -260,12 +260,18 @@ try {
     $limitations = @($limitations | Select-Object -Unique)
 
     # ---- verdict: derived, never supplied ----
+    # environment_verified decides between pass and logic-only: a clean evidence set only earns pass
+    # when the acceptance actually ran in the real target environment (true). false/unknown means
+    # the sandbox verified logic only, and the verdict says so instead of passing silently.
+    $environmentValue = $EnvironmentVerified
+    if ($EnvironmentVerified -ne 'unknown') { $environmentValue = ($EnvironmentVerified -eq 'true') }
     $bugs = @($adversarial | Where-Object { $_.result -eq 'bug' }).Count
     $gaps = @($adversarial | Where-Object { $_.result -eq 'gap' }).Count
     $acceptanceFailed = @($acceptance | Where-Object { $_.result -ne 'pass' }).Count
     $verdict = 'pass'
     if ($acceptance.Count -eq 0 -or $adversarial.Count -eq 0) { $verdict = 'blocked' }
     elseif ($acceptanceFailed -gt 0 -or $bugs -gt 0) { $verdict = 'fail' }
+    elseif ($environmentValue -ne $true) { $verdict = 'logic-only' }
 
     # ---- provenance: the report has to prove it came from this script at this content ----
     $scriptPath = [IO.Path]::GetFullPath($PSCommandPath)
@@ -275,8 +281,6 @@ try {
     $runnerPath = $scriptPath.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
     $runnerHash = (Get-FileHash -LiteralPath $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $generatedAt = (Get-Date).ToString('o')
-    $environmentValue = $EnvironmentVerified
-    if ($EnvironmentVerified -ne 'unknown') { $environmentValue = ($EnvironmentVerified -eq 'true') }
 
     $report = [ordered]@{
         flow                 = $FlowName

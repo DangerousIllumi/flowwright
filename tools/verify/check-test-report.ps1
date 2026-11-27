@@ -13,7 +13,7 @@
           "generated_at": "<ISO 8601 timestamp>"
         },
         "generated_at": "<ISO 8601 timestamp>",
-        "verdict": "pass" | "fail" | "blocked",
+        "verdict": "pass" | "fail" | "blocked" | "logic-only",
         "environment_verified": true | false | "unknown",
         "acceptance":  [ { "id": "<assertion id>", "result": "pass" | "fail", "evidence": "<...>" } ],
         "skipped":     [ { "id": "<assertion id>", "type": "<check type>", "reason": "<human-written reason>" } ],
@@ -35,9 +35,10 @@
       7. a runner that is absent, names another path, or whose sha256 is not the current
          tools/verify/run-test-report.ps1 -> RUNNER_UNVERIFIED: a hand-written report cannot pass, because
          the report has to prove it was produced by the generator;
-      8. environment_verified missing or outside true/false/unknown -> REPORT_INCOMPLETE. A value of false
-         or unknown still passes (logic was verified) but prints a WARNING: the acceptance did not run in
-         the real target environment, and the distinction must stay visible at the summary layer;
+      8. environment_verified missing or outside true/false/unknown -> REPORT_INCOMPLETE, and
+         verdict=pass while environment_verified is false or unknown -> ENVIRONMENT_NOT_VERIFIED:
+         a pass is only delivered when the acceptance ran in the real target environment; a
+         logic-only run must carry verdict=logic-only, not pass;
       9. a skipped[] item without a reason, or one not registered in known_limitations as
          "skipped:<id>: <reason>" -> SKIPPED_UNTRACED: optionality does not turn "not done" into
          "did not need to be done"; every skip carries a human-written reason and stays visible.
@@ -94,7 +95,7 @@ if (-not $verdict) {
     Write-Output '[check-test-report] VERDICT_NOT_PASS the report has no verdict field'
     exit 1
 }
-if (@('pass', 'fail', 'blocked') -notcontains $verdict) {
+if (@('pass', 'fail', 'blocked', 'logic-only') -notcontains $verdict) {
     Write-Output ("[check-test-report] VERDICT_NOT_PASS unknown verdict value: {0}" -f $verdict)
     exit 1
 }
@@ -185,8 +186,9 @@ foreach ($item in $skippedItems) {
     }
 }
 
-# Environment: verified logic is not the same as verified environment. A missing or unknown value is
-# incomplete; false or unknown still pass, but the difference has to stay visible in the summary.
+# Environment: verified logic is not the same as verified environment. A missing or invalid value is
+# incomplete, and a verdict=pass whose environment_verified is false/unknown is a contradiction: the
+# report itself says the acceptance did not run in the real target environment.
 $environmentVerified = $null
 $environmentProperty = $report.PSObject.Properties['environment_verified']
 if (-not $environmentProperty) {
@@ -203,14 +205,17 @@ if (-not $environmentProperty) {
     }
 }
 
+# Real-environment verification is a delivery hard condition: verdict=pass is only valid when
+# environment_verified is true. false/unknown means only logic was verified, and the producer
+# must have marked the report logic-only instead.
+if ($verdict -eq 'pass' -and $environmentVerified -and $environmentVerified -ne 'true') {
+    [void]$violations.Add(("ENVIRONMENT_NOT_VERIFIED verdict=pass but environment_verified={0}: the acceptance did not run in the real target environment" -f $environmentVerified))
+}
+
 if ($violations.Count -eq 0) {
     Write-Output ("[check-test-report] verdict=pass (acceptance={0}, adversarial={1}, gaps={2})" -f $acceptance.Count, $adversarial.Count, $gapCount)
 } else {
     foreach ($violation in $violations) { Write-Output ("[check-test-report] {0}" -f (ConvertTo-AsciiEscape $violation)) }
-}
-
-if ($environmentVerified -and $environmentVerified -ne 'true') {
-    Write-Output ("[check-test-report] WARNING logic verified, environment not verified (environment_verified={0}): the acceptance did not run in the real target environment" -f $environmentVerified)
 }
 
 # A stale exemption is housekeeping, not a contradiction: the check passed, so the waiver covers nothing.

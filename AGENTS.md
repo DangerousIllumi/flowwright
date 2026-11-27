@@ -180,7 +180,7 @@ written.
 |---|---|---|
 | Pre-generation | `.\tools\verify\run-gates.ps1 -Tier pregen -FlowFile <flow.json>` | design record (`check-design.js --flow`, skips when no `<name>.design.json`), decision ledger (`check-decisions.js --mode=fail`), node declaration completeness as a warn-only list (`eval-flow.js --warn`: names nodes missing `run_mode` / `idempotent` / `reversible`, never fails), path origin (`check-hardcoded-paths.ps1`), referenced targets (`check-referenced-paths.ps1`) |
 | Admission | `.\tools\verify\run-gates.ps1 -Tier admit -FlowFile <flow.json>` | the above, with the design record checked under `--require` (a missing record exits 2 and blocks), plus output-root registry (`check-output-roots.ps1`) and `pad-admit.ps1` (reversibility/ask, policy, fingerprint, preflight) |
-| Delivery | `.\tools\verify\run-gates.ps1 -Tier deliver -FlowFile <flow.json>` | hold-out set (`check-adversarial-set.ps1`), acceptance execution and report production (`run-test-report.ps1`), verdict (`check-test-report.ps1`) |
+| Delivery | `.\tools\verify\run-gates.ps1 -Tier deliver -FlowFile <flow.json>` | hold-out set (`check-adversarial-set.ps1`), acceptance execution and report production (`run-test-report.ps1`), verdict (`check-test-report.ps1`); delivery must pass `-EnvironmentVerified true` explicitly, otherwise `run-test-report` produces a logic-only report and `check-test-report` rejects it with `VERDICT_NOT_PASS` |
 
 Each tier prints one ASCII summary line (`checks=`, `red=`, `skip=`) and exits 0 pass/skip, 1 red, 2 blocked.
 Without a `business/` layer every tier prints `skip: business layer not present` and exits 0.

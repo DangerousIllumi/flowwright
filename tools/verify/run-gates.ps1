@@ -41,7 +41,9 @@ param(
     [string]$ConfigFile,
     [string]$ReportFile,
     [string]$RunId,
-    [datetime]$Since
+    [datetime]$Since,
+    [ValidateSet('true', 'false', 'unknown')]
+    [string]$EnvironmentVerified
 )
 
 $ErrorActionPreference = 'Stop'
@@ -268,6 +270,7 @@ if ($Tier -eq 'deliver') {
         $report = Join-Path $logsDir ("test-report-{0}.json" -f $RunId)
         $runnerArguments = @('-FlowName', $flowName, '-RunId', $RunId, '-FlowFile', $FlowFile, '-RepoRoot', $RepoRoot)
         if ($ConfigFile) { $runnerArguments += @('-ConfigFile', $ConfigFile) }
+        if ($PSBoundParameters.ContainsKey('EnvironmentVerified')) { $runnerArguments += @('-EnvironmentVerified', $EnvironmentVerified) }
         $hasSince = $PSBoundParameters.ContainsKey('Since')
         if (-not $hasSince) {
             $manifestSince = Get-LatestRunSince
