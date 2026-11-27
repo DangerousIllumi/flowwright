@@ -27,7 +27,8 @@
  *   2. every decisions[].node exists in flow.json
  *   3. every decisions[].decision_id exists in the ledger
  *   4. a class=risk ledger record must be approved by a person (decided_by=user); an agent may record a
- *      decision, but it may not approve a risk one
+ *      decision, but it may not approve a risk one. A class=design record needs decided_by=user as well,
+ *      and it may not stand in for the class=risk coverage a risk node requires.
  *   5. every ledger record uses the closed scope domain: global | flow:<name> | script:<repo-relative path>.
  *      scope does NOT decide which flow a decision belongs to (decisions[].node does that); it is the
  *      human-readable subject of the decision, and it is validated as a schema field so it cannot drift
@@ -46,7 +47,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const CLASSES = ["risk", "standard"];
+const CLASSES = ["risk", "standard", "design"];
 const DECIDED_BY = ["user", "agent(recorded)"];
 const MODES = ["warn", "fail"];
 
@@ -280,8 +281,8 @@ function checkDecisions(flowFile, options = {}) {
           // the audit trail, but citing it would mean operating on an expired authorisation.
           add("DECISION_SUPERSEDED", `decision=${entry.decision_id} node=${entry.node} has been superseded by a later ledger row; cite the row that supersedes it instead`);
         }
-        if (rec.class === "risk" && rec.decided_by !== "user") {
-          add("DECISION_NOT_USER_APPROVED", `decision=${entry.decision_id} decided_by=${JSON.stringify(rec.decided_by)} a risk-class decision needs a person; record the confirmation as a new row with decided_by=user and supersedes=${entry.decision_id}`);
+        if ((rec.class === "risk" || rec.class === "design") && rec.decided_by !== "user") {
+          add("DECISION_NOT_USER_APPROVED", `decision=${entry.decision_id} decided_by=${JSON.stringify(rec.decided_by)} a ${rec.class}-class decision needs a person; record the confirmation as a new row with decided_by=user and supersedes=${entry.decision_id}`);
         }
         // A record that lists nodes authorises exactly those nodes. A flow that cites it for a node outside
         // the list is borrowing a batch approval for something nobody approved - this is the only thing that
@@ -304,7 +305,7 @@ function checkDecisions(flowFile, options = {}) {
     const records = recordsByNode.get(id) || [];
     if (records.some((r) => r && r.class === "risk")) continue;
     if (records.length === 0 || records.some((r) => r == null)) continue;
-    add("RISK_NODE_DECISION_NOT_RISK", `flow=${flowLabel} node=${id} is irreversible or destructive but every decision naming it is class=standard; a risk node needs a class=risk record with decided_by=user`);
+    add("RISK_NODE_DECISION_NOT_RISK", `flow=${flowLabel} node=${id} is irreversible or destructive but every decision naming it is class=standard or class=design; a risk node needs a class=risk record with decided_by=user`);
   }
 
   return {
