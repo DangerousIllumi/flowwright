@@ -61,7 +61,7 @@ processes exist only on the user's own machine and never leak through the reposi
 | Turn a plain-language requirement into a **reviewable structured definition** (IR: `flow.json` + flowchart) | An AI assistant following [AGENTS.md](AGENTS.md) and [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) |
 | **Deterministically compile** the IR into the target engine's artifact (the current adapter emits `.robin`) | The adapter fills in blanks from the action table; a made-up action or parameter is rejected outright |
 | **Static checks** before and after compiling: IR structure (`edges` / variable references) and artifact syntax | `check.js` / `check-flows.js` / `lint-robin.js` / `check-flow.js` (the `.robin` part belongs to the PAD adapter) |
-| **Admission**: is the action registered, does it need a UI selector, is there a budget, is the trigger declared, does the policy deny/ask/allow | `pad-admit.ps1` (16 read-only checks, part of the PAD adapter) |
+| **Admission**: is the action registered, does it need a UI selector, is there a budget, is the trigger declared, does the policy deny/ask/allow | `pad-admit.ps1` (17 read-only checks, part of the PAD adapter) |
 | **Skippable side effects**: sending mail, posting documents, deleting files wrapped in `guard` and controlled by `DRY_RUN` | IR structure, generator and admission policy, layered |
 | Injecting into the designer, publishing, rollback, scheduling, telemetry, artifact acceptance (PAD adapter) | `tools/pad-sync/` |
 
@@ -248,7 +248,7 @@ Two gates, each answering a different question:
 | Gate | Question | Key implementation |
 |---|---|---|
 | Content scan | **Can these files be pushed?** (File-level compliance is not enough — business names and real paths in comments can still leak, so every line is scanned) | `tools/publish/check-public-safe.ps1`: any denylist hit fails; a `business/` path is rejected outright (exit code 2). The `pre-commit` hook scans the staged set; CI backstops with `git ls-files` |
-| Admission gate | **Can this flow / this run execute?** (16 read-only checks, all findings returned in one pass) | `tools/pad-sync/pad-admit.ps1` (PAD adapter): exit `0` pass / `1` has fails / `2` only asks |
+| Admission gate | **Can this flow / this run execute?** (17 read-only checks, all findings returned in one pass) | `tools/pad-sync/pad-admit.ps1` (PAD adapter): exit `0` pass / `1` has fails / `2` only asks |
 
 **Fingerprints (PAD adapter)**: after publishing, the SHA256 of three inputs — the `.robin`, the deployment config
 and the acceptance criteria — is written into a baseline (v3 also records the scripts the flow actually
