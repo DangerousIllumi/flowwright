@@ -1,0 +1,31 @@
+{
+  "flow": "tests/eval/fixtures/script-only-shell.json",
+  "description": "Requirement: a PAD flow that only wraps an external script and shows a dialog has no UI-class action; NO_UI_ACTIONS_BUT_PAD must fire as a warning (never a failure)",
+  "cases": [
+    {
+      "id": "no-ui-actions-but-pad-warns",
+      "requirement": "The flow contains zero UI-class actions, so the NO_UI_ACTIONS_BUT_PAD warning fires (warn-only: the run still passes)",
+      "expect": [
+        { "op": "noUiActionsButPad", "expect": "warn" }
+      ]
+    },
+    {
+      "id": "wrapper-shape",
+      "requirement": "The flow is a script call plus a human dialog, nothing else",
+      "expect": [
+        { "op": "action", "id": "1", "padHint": "Scripting.RunDOSCommand.RunDOSCommand" },
+        { "op": "action", "id": "3", "padHint": "Display.ShowMessageDialog.ShowMessage" },
+        { "op": "absentMatch", "pattern": "^(UIAutomation|WebAutomation\\.(Click|Focus|PopulateTextField|PressButton|SetDropDownListValue|SetCheckboxState|SelectRadioButton|TakeScreenshot|WaitForWebPageContent|IfWebPageContains)\\.|OCR\\.|MouseAndKeyboard\\.(SendKeys\\.FocusAndSendKeysByControl|MoveMouseToTextOnScreenWithOCR))" }
+      ]
+    },
+    {
+      "id": "ui-click-flow-does-not-warn",
+      "requirement": "Positive case: a flow with a recorded UI click has a UI-class action, so no warning fires",
+      "flow": "tests/eval/fixtures/with-ui-click.json",
+      "expect": [
+        { "op": "noUiActionsButPad", "expect": "present" },
+        { "op": "action", "id": "1", "padHint": "UIAutomation.Click.Click" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "name": "script-only-shell",
+  "description": "A thin PAD wrapper around an external script: no UI-class action at all, so NO_UI_ACTIONS_BUT_PAD fires (warn-only)",
+  "trigger": { "kind": "manual" },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "ScriptPath", "type": "string", "default": "business\\scripts\\reconcile.ps1" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "Run the entry script",
+      "type": "action",
+      "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand",
+      "params": {
+        "DOSCommand": "powershell.exe -File {{variables.ScriptPath}}",
+        "WorkingDirectory": ""
+      },
+      "output_map": { "ExitCode": "ExitCode", "StandardOutput": "StdOut" },
+      "intent": "reconcile",
+      "intent_destructive": false,
+      "next": ["2"],
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
+    },
+    {
+      "id": "2",
+      "label": "Branch on the script exit code",
+      "type": "condition",
+      "pad_hint": "IF",
+      "params": { "Condition": "{{1.ExitCode}} = 0" },
+      "branch": { "trueBody": ["3"], "falseBody": ["3"] },
+      "next": ["3"],
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
+    },
+    {
+      "id": "3",
+      "label": "Tell the operator the outcome",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": { "Message": "reconcile finished, exit code {{1.ExitCode}}" },
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
+    }
+  ]
+}

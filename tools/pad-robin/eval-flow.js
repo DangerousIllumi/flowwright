@@ -12,6 +12,11 @@
  * --warn is the exception to those exit codes: it lists nodes missing run_mode / idempotent / reversible and
  * always exits 0 (2 only when no target is given), so an advisory check can sit in a gate tier without
  * blocking anything. run-gates.ps1 -Tier pregen uses it that way.
+ *
+ * Candidate rule NO_UI_ACTIONS_BUT_PAD (docs/engine-selection.md section 5), implemented here as warn-only:
+ * a flow whose nodes contain zero UI-class actions is reported with one warning per flow, but the warning
+ * never changes the exit code. UI-class membership comes from the action KB (needs_ui_selector===true);
+ * when the KB cannot be read, the explicit prefix list in UI_ACTION_PREFIXES_FALLBACK is used instead.
  */
 
 const fs = require("fs");
@@ -57,6 +62,89 @@ const POSTING_INTENT_RE = /^(sap-migo|posting)$/i;
 // Excel.RenameWorksheet.*, PowerPoint.MovePowerPointSlide, and the mail-move actions), which inverse operation
 // restores. This is an explicit alternation, never a wildcard like .*Delete.*.
 const DESTRUCTIVE_HINT_RE = /^(File\.(Delete|Move|RenameFiles\.)|Folder\.Delete$|Excel\.(DeleteCells\.|DeleteColumn|DeleteRow|DeleteWorksheet\.)|FTP\.(DeleteDirectory|DeleteFiles)|Outlook\.ProcessEmailMessages\.DeleteEmails|PowerPoint\.DeletePowerPointSlide\.|System\.DeleteEnvironmentVariable|XML\.(RemoveElement|RemoveElementAttribute))/i;
+
+// ---- NO_UI_ACTIONS_BUT_PAD (warn-only) --------------------------------------
+// UI-class membership is read from the action KB: an action counts as UI-class when the KB marks it
+// needs_ui_selector===true (a recorded UI/web element or image — UIAutomation/OCR screen text plus the
+// recording-lane WebAutomation and control-targeted MouseAndKeyboard actions). Display.* dialogs are
+// needs_ui_selector=false in the KB, so a human-confirmation dialog does NOT count as a UI action
+// (docs/engine-selection.md section 5, decision 2's natural reading).
+//
+// FALLBACK (used only when the KB cannot be loaded, e.g. setup.ps1 was never run): an explicit
+// id-prefix list, derived from the KB's needs_ui_selector===true set (114 actions, modules
+// UIAutomation=58, WebAutomation=52, OCR=2, MouseAndKeyboard=2). Every prefix below is verified to
+// exist in pad-robin-action-kb/PAD_Robin_ActionKB.json:
+//   UIAutomation.            — every UIAutomation.* action that drives a window/control element
+//                              (the module's non-selector actions are IfWindow*/GetWindow* checks)
+//   OCR.IfTextOnScreen.TextOnScreenExistsWithWindowsOcr
+//   OCR.WaitForTextOnScreen.TextOnScreenToAppearWithWindowsOcr
+//   WebAutomation.Click. / WebAutomation.ClickDownloadLink / WebAutomation.Focus. /
+//   WebAutomation.GetDetailsOfElement / WebAutomation.GetWebControl / WebAutomation.HoverOverElement /
+//   WebAutomation.IfWebPageContains. / WebAutomation.PopulateTextField. / WebAutomation.PressButton. /
+//   WebAutomation.SelectRadioButton. / WebAutomation.SetCheckboxState. /
+//   WebAutomation.SetDropDownListValue. / WebAutomation.TakeScreenshot. /
+//   WebAutomation.WaitForWebPageContent.
+//   MouseAndKeyboard.MoveMouseToTextOnScreenWithOCR. /
+//   MouseAndKeyboard.SendKeys.FocusAndSendKeysByControl
+// Display.ShowMessageDialog.* is deliberately NOT in the fallback: it talks to a human, not to an
+// application surface. If the KB ever stops carrying a reliable per-action flag, extend this list —
+// do not guess from module names alone.
+const UI_ACTION_PREFIXES_FALLBACK = [
+  "UIAutomation.",
+  "OCR.IfTextOnScreen.TextOnScreenExistsWithWindowsOcr",
+  "OCR.WaitForTextOnScreen.TextOnScreenToAppearWithWindowsOcr",
+  "WebAutomation.Click.",
+  "WebAutomation.Focus.",
+  "WebAutomation.GetDetailsOfElement",
+  "WebAutomation.GetWebControl",
+  "WebAutomation.HoverOverElement",
+  "WebAutomation.IfWebPageContains.",
+  "WebAutomation.PopulateTextField.",
+  "WebAutomation.PressButton.",
+  "WebAutomation.SelectRadioButton.",
+  "WebAutomation.SetCheckboxState.",
+  "WebAutomation.SetDropDownListValue.",
+  "WebAutomation.TakeScreenshot.",
+  "WebAutomation.WaitForWebPageContent.",
+  "MouseAndKeyboard.MoveMouseToTextOnScreenWithOCR.",
+  "MouseAndKeyboard.SendKeys.FocusAndSendKeysByControl",
+];
+
+// Load the action KB the same way flow-to-robin.js does (repo-relative first, then cwd). Returns null when
+// the KB is absent — the caller then falls back to UI_ACTION_PREFIXES_FALLBACK instead of guessing.
+function loadActionKb() {
+  const candidates = [
+    path.join(__dirname, "..", "..", "pad-robin-action-kb", "PAD_Robin_ActionKB.json"),
+    path.join(process.cwd(), "pad-robin-action-kb", "PAD_Robin_ActionKB.json"),
+  ];
+  const kbPath = candidates.find((p) => fs.existsSync(p));
+  if (!kbPath) return null;
+  try {
+    const kb = JSON.parse(fs.readFileSync(kbPath, "utf8"));
+    if (!kb || !Array.isArray(kb.actions)) return null;
+    return new Set(kb.actions.filter((a) => a && a.needs_ui_selector === true).map((a) => a.actionId));
+  } catch (e) {
+    return null;
+  }
+}
+
+// A pad_hint is UI-class when the KB flags it, or (KB missing) when it matches the fallback prefix list.
+// Non-action nodes (IF / LOOP / GUARD / SWITCH / EXIT LOOP ...) are never UI-class.
+function isUiActionHint(hint, uiActionIds) {
+  const h = String(hint || "");
+  if (!h || h === "IF" || h === "LOOP" || h === "GUARD" || h === "SWITCH" || h === "EXIT LOOP") return false;
+  if (uiActionIds) return uiActionIds.has(h);
+  return UI_ACTION_PREFIXES_FALLBACK.some((p) => h.startsWith(p));
+}
+
+// Warn-only scan behind NO_UI_ACTIONS_BUT_PAD: returns true when the flow has at least one node and no
+// UI-class action at all — the shape docs/engine-selection.md section 4 calls "a script wearing a flow's
+// clothes". Never a failure; the caller only prints a warning.
+function hasNoUiAction(flow, uiActionIds) {
+  const nodes = Array.isArray(flow && flow.nodes) ? flow.nodes : [];
+  if (nodes.length === 0) return false;
+  return !nodes.some((n) => isUiActionHint(n && n.pad_hint, uiActionIds));
+}
 function irreversibleReason(n) {
   const hint = String((n && n.pad_hint) || "");
   if (/^Outlook\.SendEmail/i.test(hint)) return "sending mail cannot be undone; only a corrective resend is possible";
@@ -651,6 +739,21 @@ const OPS = {
         : `inputs declarations are well-formed${warnings.length ? ` (${warnings.map((x) => x.code).join(",")})` : ""}`,
     };
   },
+  // NO_UI_ACTIONS_BUT_PAD (candidate rule, docs/engine-selection.md section 5), warn-only:
+  //   expect=warn     asserts the flow has zero UI-class actions (the warning would fire)
+  //   expect=present  asserts at least one UI-class action exists (no warning)
+  // The op itself never fails the run for the rule's sake; it only reports which side the flow is on.
+  noUiActionsButPad(flow, a) {
+    const uiActionIds = loadActionKb();
+    const noUi = hasNoUiAction(flow, uiActionIds);
+    if (a.expect === "warn") {
+      return { ok: noUi, detail: noUi ? "no UI-class action in any node (warning would fire)" : "at least one UI-class action present" };
+    }
+    if (a.expect === "present") {
+      return { ok: !noUi, detail: noUi ? "no UI-class action in any node" : "UI-class action(s) present: " + flow.nodes.filter((n) => isUiActionHint(n.pad_hint, uiActionIds)).map((n) => n.pad_hint).join(",") };
+    }
+    return { ok: true, detail: noUi ? "NO_UI_ACTIONS_BUT_PAD warning would fire" : "has UI-class action" };
+  },
   // Every external call must have a failure branch or a guard/early-exit.
   // expect=uncovered asserts the opposite and is used by the negative fixture.
   failurePath(flow, a) {
@@ -819,6 +922,13 @@ if (require.main === module) {
   const report = [];
   let total = 0;
   let passed = 0;
+  // NO_UI_ACTIONS_BUT_PAD: one warning per flow sample with zero UI-class actions. Warn-only — printed to
+  // stderr so --json stdout stays machine-readable, and never counted as a failure or a passed case.
+  const uiActionIds = loadActionKb();
+  const warnNoUi = (flowLabel, flow) => {
+    if (!hasNoUiAction(flow, uiActionIds)) return;
+    console.error(`[eval-flow][warn] NO_UI_ACTIONS_BUT_PAD ${flowLabel}: no UI-class action in any node; a plain script may be the better engine (docs/engine-selection.md section 5); warn-only, exit code is not affected`);
+  };
 
   // Declaration-only mode: one synthetic "declarations-complete" case per flow, which is exactly the check
   // cases mode always runs first; the report shape stays {total, passed, files:[{flow, cases:[...]}]}.
@@ -833,6 +943,7 @@ if (require.main === module) {
         process.exit(2);
       }
       const result = OPS.declarationsComplete(flow);
+      warnNoUi(file, flow);
       total += 1;
       if (result.ok) passed += 1;
       report.push({ flow: file, cases: [{ id: "declarations-complete", requirement, ok: result.ok, results: [result] }] });
@@ -852,6 +963,7 @@ if (require.main === module) {
     // The flow under test in every case file unconditionally runs the must-answer completeness check first, no longer relying on cases listing expect explicitly;
     // negative cases that override the flow (deliberately missing fields) are exempt and are judged by their own assertions.
     const baseDecl = OPS.declarationsComplete(flow);
+    warnNoUi(s.flowPath, flow);
     const cases = [
       {
         id: "declarations-complete",
@@ -895,4 +1007,4 @@ if (require.main === module) {
   process.exit(passed === total && report.every((f) => !f.error) ? 0 : 1);
 }
 
-module.exports = { runCase, OPS };
+module.exports = { runCase, OPS, loadActionKb, isUiActionHint, hasNoUiAction, UI_ACTION_PREFIXES_FALLBACK };

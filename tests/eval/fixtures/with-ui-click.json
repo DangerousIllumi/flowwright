@@ -1,0 +1,36 @@
+{
+  "name": "with-ui-click",
+  "description": "A flow that genuinely needs PAD: one recorded UI click on a desktop control (positive case for NO_UI_ACTIONS_BUT_PAD)",
+  "trigger": { "kind": "manual" },
+  "budget": { "maxLoop": 1 },
+  "variables": [],
+  "edges": [
+    { "from": "1", "to": "2" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "Click the Save button in the desktop client",
+      "type": "action",
+      "pad_hint": "UIAutomation.Click.Click",
+      "params": {
+        "Window": "Notepad",
+        "Control": "SaveButton"
+      },
+      "next": ["2"],
+      "run_mode": "confirm",
+      "idempotent": true,
+      "reversible": true
+    },
+    {
+      "id": "2",
+      "label": "Confirm completion",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": { "Message": "clicked" },
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
+    }
+  ]
+}
