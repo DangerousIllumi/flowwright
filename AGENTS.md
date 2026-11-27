@@ -158,7 +158,9 @@ A requirement is done only when all of the following hold:
    with code 2 and also blocks delivery)
 4. The user is told the artifact path, the paste steps, and everything that still needs human work
    (UI elements / VBS / accounts)
-5. A test report exists with `verdict=pass`:
+5. The flow has a design record at `business/flows/<name>.design.json` and `check-design.js` passes on it;
+   the admit tier runs it with `--require`, so a missing record exits 2 and blocks delivery
+6. A test report exists with `verdict=pass`:
    `.\tools\verify\check-test-report.ps1 -ReportFile <report>.json` exits 0. No report, or any verdict other
    than `pass`, stops the task here — it is not delivered on the strength of the first four items. The report
    cites its acceptance results and its adversarial results; a `gap` is allowed only when it is listed in
@@ -176,8 +178,8 @@ written.
 
 | Tier | Command | Runs |
 |---|---|---|
-| Pre-generation | `.\tools\verify\run-gates.ps1 -Tier pregen -FlowFile <flow.json>` | decision ledger (`check-decisions.js --mode=fail`), node declaration completeness as a warn-only list (`eval-flow.js --warn`: names nodes missing `run_mode` / `idempotent` / `reversible`, never fails), path origin (`check-hardcoded-paths.ps1`), referenced targets (`check-referenced-paths.ps1`) |
-| Admission | `.\tools\verify\run-gates.ps1 -Tier admit -FlowFile <flow.json>` | the above, plus output-root registry (`check-output-roots.ps1`) and `pad-admit.ps1` (reversibility/ask, policy, fingerprint, preflight) |
+| Pre-generation | `.\tools\verify\run-gates.ps1 -Tier pregen -FlowFile <flow.json>` | design record (`check-design.js --flow`, skips when no `<name>.design.json`), decision ledger (`check-decisions.js --mode=fail`), node declaration completeness as a warn-only list (`eval-flow.js --warn`: names nodes missing `run_mode` / `idempotent` / `reversible`, never fails), path origin (`check-hardcoded-paths.ps1`), referenced targets (`check-referenced-paths.ps1`) |
+| Admission | `.\tools\verify\run-gates.ps1 -Tier admit -FlowFile <flow.json>` | the above, with the design record checked under `--require` (a missing record exits 2 and blocks), plus output-root registry (`check-output-roots.ps1`) and `pad-admit.ps1` (reversibility/ask, policy, fingerprint, preflight) |
 | Delivery | `.\tools\verify\run-gates.ps1 -Tier deliver -FlowFile <flow.json>` | hold-out set (`check-adversarial-set.ps1`), acceptance execution and report production (`run-test-report.ps1`), verdict (`check-test-report.ps1`) |
 
 Each tier prints one ASCII summary line (`checks=`, `red=`, `skip=`) and exits 0 pass/skip, 1 red, 2 blocked.

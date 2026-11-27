@@ -5,11 +5,15 @@ A design record turns the design conversation into a reviewable artifact. It liv
 
 ```powershell
 node tools\verify\check-design.js business\flows\<name>.design.json --flow business\flows\<name>.json
-node tools\verify\check-design.js --flow business\flows\<name>.json   # skips when the record is absent
+node tools\verify\check-design.js --flow business\flows\<name>.json            # skips when the record is absent
+node tools\verify\check-design.js --flow business\flows\<name>.json --require  # missing record exits 2
 ```
 
 The second form derives `<name>.design.json` and exits 0 with `skip` when the record does not exist, so a
-repository without design records keeps building.
+repository without design records keeps building. With `--require`, a missing record instead prints
+`DESIGN_RECORD_MISSING: <flow path>` and exits 2. `tools\verify\run-gates.ps1` wires this in per tier: the
+`pregen` tier calls the plain `--flow` form (a missing record stays a skip, exit 0), while the `admit` tier
+passes `--require`, so a flow without a design record is blocked at admission with exit 2.
 
 ## Shape
 
