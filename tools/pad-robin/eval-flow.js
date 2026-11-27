@@ -366,6 +366,93 @@ function validateInputs(flow, opts = {}) {
   return { errors, warnings };
 }
 
+// ---- failurePath helpers ---------------------------------------------------
+// External calls are the nodes whose failure is outside this process' control.
+// Keep this predicate in step with tools/verify/check-design.js.
+const EXTERNAL_CALL_RE =
+  /^(Outlook\.|Excel\.|SAP\.|FTP\.|Web\.|WebAutomation\.|Scripting\.(RunDOSCommand|RunVBScript|RunPowershellScript))/i;
+const FAILURE_SIGNAL_RE = /\b(Error|Failed|Failure|Success|ExitCode|HttpStatus|StatusCode)\b/i;
+
+function isExternalCall(node) {
+  return !!(node && typeof node.pad_hint === "string" && EXTERNAL_CALL_RE.test(node.pad_hint));
+}
+
+function nodeIndex(flow) {
+  const map = new Map();
+  for (const n of flow.nodes || []) map.set(String(n.id), n);
+  return map;
+}
+
+function successors(node) {
+  const out = [];
+  const add = (ids) => {
+    for (const id of ids || []) out.push(String(id));
+  };
+  add(node.next);
+  const branch = node.branch || {};
+  add(branch.trueBody);
+  add(branch.falseBody);
+  const sw = node.switch || {};
+  for (const c of sw.cases || []) add(c.body);
+  add(sw.default);
+  add(node.body);
+  add(node.elseBody);
+  return out;
+}
+
+// A GUARD body is an explicit early-exit/rollback wrapper: every node directly
+// inside it (including nested GUARD bodies) counts as having a failure path.
+function guardedIds(flow) {
+  const byId = nodeIndex(flow);
+  const guarded = new Set();
+  const addBody = (ids) => {
+    for (const raw of ids || []) {
+      const id = String(raw);
+      if (guarded.has(id)) continue;
+      guarded.add(id);
+      const child = byId.get(id);
+      if (child && child.pad_hint === "GUARD") addBody(child.body);
+    }
+  };
+  for (const n of flow.nodes || []) {
+    if (n.pad_hint === "GUARD") addBody(n.body);
+  }
+  return guarded;
+}
+
+function branchIsFailureHandler(node) {
+  if (!node) return false;
+  const branch = node.branch || {};
+  const hasBody = (branch.trueBody || []).length > 0 || (branch.falseBody || []).length > 0;
+  if (!hasBody) return false;
+  if (node.pad_hint === "IF") {
+    return FAILURE_SIGNAL_RE.test(String((node.params || {}).Condition || ""));
+  }
+  if (node.pad_hint === "SWITCH") {
+    const sw = node.switch || {};
+    return FAILURE_SIGNAL_RE.test(JSON.stringify(sw)) && ((sw.cases || []).length > 0 || (sw.default || []).length > 0);
+  }
+  return false;
+}
+
+function hasFailurePath(flow, node) {
+  if (guardedIds(flow).has(String(node.id))) return true;
+  if (branchIsFailureHandler(node)) return true;
+  const byId = nodeIndex(flow);
+  const seen = new Set([String(node.id)]);
+  const queue = successors(node);
+  while (queue.length) {
+    const id = queue.shift();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const next = byId.get(id);
+    if (!next) continue;
+    if (branchIsFailureHandler(next)) return true;
+    for (const s of successors(next)) if (!seen.has(s)) queue.push(s);
+  }
+  return false;
+}
+
 /** Table of assertion operations: each returns { ok, detail } */
 const OPS = {
   // Total node count: pins the structure so it cannot drift again
@@ -563,6 +650,27 @@ const OPS = {
         ? errors.map((x) => `${x.code}: ${x.detail}`).join("; ")
         : `inputs declarations are well-formed${warnings.length ? ` (${warnings.map((x) => x.code).join(",")})` : ""}`,
     };
+  },
+  // Every external call must have a failure branch or a guard/early-exit.
+  // expect=uncovered asserts the opposite and is used by the negative fixture.
+  failurePath(flow, a) {
+    const external = (flow.nodes || []).filter(isExternalCall);
+    const target = a.id ? external.filter((n) => String(n.id) === String(a.id)) : external;
+    if (a.id && target.length === 0) {
+      return {
+        ok: false,
+        detail: `node ${a.id} is not an external-call node (Outlook/Excel/SAP/FTP/Web/WebAutomation/Scripting.Run*)`,
+      };
+    }
+    if (target.length === 0) return { ok: false, detail: "no external-call node in this flow" };
+    const uncovered = target.filter((n) => !hasFailurePath(flow, n));
+    const detail = `uncovered: ${uncovered.map((n) => n.id).join(",") || "none"} (external: ${target
+      .map((n) => `${n.id}(${n.pad_hint})`)
+      .join(", ")})`;
+    if (a.expect === "uncovered") {
+      return { ok: uncovered.length > 0, detail };
+    }
+    return { ok: uncovered.length === 0, detail };
   },
 };
 

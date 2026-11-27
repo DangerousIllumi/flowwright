@@ -18,6 +18,13 @@
         { "op": "condition", "id": "2", "contains": "HttpStatus = 200" },
         { "op": "edge", "from": "2", "to": "4" }
       ]
+    },
+    {
+      "id": "failure-path-visible",
+      "requirement": "An HTTP failure must reach a failure branch instead of being silently ignored",
+      "expect": [
+        { "op": "failurePath", "id": "1" }
+      ]
     }
   ]
 }

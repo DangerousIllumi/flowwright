@@ -18,6 +18,13 @@
         { "op": "condition", "id": "3", "contains": "Rows.Count > 0" },
         { "op": "edge", "from": "3", "to": "4" }
       ]
+    },
+    {
+      "id": "no-failure-branch-is-reported",
+      "requirement": "Negative fixture: this sample has no failure branch, so failurePath must report node 1",
+      "expect": [
+        { "op": "failurePath", "id": "1", "expect": "uncovered" }
+      ]
     }
   ]
 }
