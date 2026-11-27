@@ -240,7 +240,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "admit gate failed: $LASTEXITCODE" }
 
       - name: Generator and comparator unit tests
-        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js tools\pad-robin\lint-robin.test.js tools\verify\check-decisions.test.js tools\verify\check-decisions-ledger-only.test.js tools\verify\check-decisions-supersede-nodes.test.js
+        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js tools\pad-robin\lint-robin.test.js tools\verify\check-decisions.test.js tools\verify\check-decisions-ledger-only.test.js tools\verify\check-decisions-supersede-nodes.test.js tools\verify\check-design.test.js
 
       - name: Canvas read-back unit tests
         run: node --test tools\flow-drawio\drawio-to-flow.test.js

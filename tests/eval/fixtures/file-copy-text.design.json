@@ -1,0 +1,21 @@
+{
+  "flow": "tests/eval/fixtures/file-copy-text.json",
+  "note": "Synthetic sample: the record shape is the contract; the lane value records a design judgment.",
+  "requirements": [
+    { "id": "R1", "text": "Read the source text file before writing anything" },
+    { "id": "R2", "text": "Write the read content to the target file and overwrite an existing target" }
+  ],
+  "mapping": [
+    { "clause": "R1", "nodes": ["1"], "acceptance": ["source-read"] },
+    { "clause": "R2", "nodes": ["2"], "acceptance": ["target-file-written"] }
+  ],
+  "lane": {
+    "choice": "py",
+    "reason": "A file-only job has no desktop UI step, so docs/engine-selection.md sends it to the py entry-script lane rather than PAD."
+  },
+  "failure_paths": [],
+  "state_markers": [],
+  "rejected_alternatives": [
+    { "option": "PAD", "reason": "Adds designer and deployment cost without removing a UI failure mode." }
+  ]
+}
